@@ -6,7 +6,7 @@ fn main() -> ExitCode {
     if args.first().is_some_and(|a| a == "--debug-tree") {
         return debug_tree();
     }
-    let code = palantir_java_format::cli::run(
+    let code = jtk::cli::run(
         &args,
         &mut std::io::stdin().lock(),
         &mut std::io::stdout().lock(),
@@ -19,7 +19,7 @@ fn main() -> ExitCode {
 fn debug_tree() -> ExitCode {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).unwrap();
-    match palantir_java_format::parse::parse(&input) {
+    match jtk::parse::parse(&input) {
         Some(tree) => {
             println!("{}", tree.root_node().to_sexp());
             ExitCode::SUCCESS

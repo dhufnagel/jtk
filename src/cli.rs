@@ -14,11 +14,11 @@ use crate::output::Replacement;
 const STDIN_FILENAME: &str = "<stdin>";
 
 pub fn version_string() -> String {
-    format!("palantir-java-format: Version {} (Rust port)", env!("CARGO_PKG_VERSION"))
+    format!("jtk: Version {} (compatible with palantir-java-format 2.103.0)", env!("CARGO_PKG_VERSION"))
 }
 
 const USAGE: &str = "
-Usage: palantir-java-format [options] file(s)
+Usage: jtk [options] file(s)
 
 Options:
   -i, -r, -replace, --replace

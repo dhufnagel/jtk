@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::Path;
 
-use palantir_java_format::{format_source, format_without_reflow};
+use jtk::{format_source, format_without_reflow};
 
 fn first_diff(expected: &str, actual: &str) -> String {
     for (i, (e, a)) in expected.lines().zip(actual.lines()).enumerate() {

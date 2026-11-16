@@ -2,7 +2,7 @@
 # Measures the CPU time of formatting every file listed in <file-list> (paths relative to <dir>), printing to stdout.
 # Usage: scripts/bench.sh <dir> <file-list> [runs]
 set -euo pipefail
-bin=$(cd "$(dirname "$0")/.." && pwd)/target/release/palantir-java-format
+bin=$(cd "$(dirname "$0")/.." && pwd)/target/release/jtk
 dir=$1 list=$2 runs=${3:-3}
 cd "$dir"
 for _ in $(seq "$runs"); do

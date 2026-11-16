@@ -10,7 +10,7 @@ set -euo pipefail
 original=$1
 src=$(cd "$2" && pwd)
 work=${3:-$(mktemp -d)}
-port=$(cd "$(dirname "$0")/.." && pwd)/target/release/palantir-java-format
+port=$(cd "$(dirname "$0")/.." && pwd)/target/release/jtk
 
 cargo build --release --quiet --manifest-path "$(dirname "$0")/../Cargo.toml"
 mkdir -p "$work"

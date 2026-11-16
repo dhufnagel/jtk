@@ -1,6 +1,7 @@
-# palantir-java-format (Rust port)
+# jtk
 
-A Rust rewrite of [palantir-java-format](https://github.com/palantir/palantir-java-format), limited to formatting
+jtk is a Java toolkit written in Rust. Its formatter is a rewrite of
+[palantir-java-format](https://github.com/palantir/palantir-java-format) with byte-identical output, limited to formatting
 Java source code. No IDE, Gradle or Spotless plugins.
 
 It ports the original pipeline closely:
@@ -22,10 +23,10 @@ It ports the original pipeline closely:
 
 ```sh
 cargo build --release
-./target/release/palantir-java-format Foo.java Bar.java   # print formatted sources
-./target/release/palantir-java-format -i src/**/*.java    # format in place
-./target/release/palantir-java-format - < Foo.java        # stdin to stdout
-./target/release/palantir-java-format --dry-run --set-exit-if-changed src/**/*.java   # CI check
+./target/release/jtk Foo.java Bar.java   # print formatted sources
+./target/release/jtk -i src/**/*.java    # format in place
+./target/release/jtk - < Foo.java        # stdin to stdout
+./target/release/jtk --dry-run --set-exit-if-changed src/**/*.java   # CI check
 ```
 
 The command line is compatible with the original's (`--help` lists all options): `-i`, `-`, `--assume-filename`,

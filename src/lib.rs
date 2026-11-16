@@ -1,4 +1,4 @@
-//! A Rust port of palantir-java-format, limited to formatting Java source code.
+//! jtk, a Java toolkit. Its formatter is a Rust port of palantir-java-format, with byte-identical output.
 
 pub mod ast;
 pub mod cli;

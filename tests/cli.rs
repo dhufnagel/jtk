@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use palantir_java_format::cli::run;
+use jtk::cli::run;
 
 const UNFORMATTED: &str = "class A {\n  int x=1;\n    int y=2;\n}\n";
 const FORMATTED: &str = "class A {\n    int x = 1;\n    int y = 2;\n}\n";
@@ -154,7 +154,7 @@ fn usage_errors_print_usage_and_exit_zero() {
         let (code, out, err) = pjf(args, "");
         assert_eq!((code, out.as_str()), (0, ""), "{args:?}");
         assert!(err.starts_with(&format!("{message}\n")), "{args:?}: {err}");
-        assert!(err.contains("Usage: palantir-java-format [options] file(s)"));
+        assert!(err.contains("Usage: jtk [options] file(s)"));
     }
 }
 

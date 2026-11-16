@@ -5,9 +5,9 @@
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use palantir_java_format::{FormatOptions, format};
+use jtk::{FormatOptions, format};
 
-fn format_source(text: &str) -> Result<String, palantir_java_format::FormatError> {
+fn format_source(text: &str) -> Result<String, jtk::FormatError> {
     format(text, &FormatOptions::default())
 }
 

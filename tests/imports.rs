@@ -1,7 +1,7 @@
 //! Upstream import tests (`GoogleImportStyleTest`, `RemoveUnusedImportsTest`, `RemoveUnusedImportsCaseLabelsTest`),
 //! extracted into `tests/imports/*.json` as `[[input lines], [output lines]]` pairs.
 
-use palantir_java_format::imports::{remove_unused_imports, reorder_imports};
+use jtk::imports::{remove_unused_imports, reorder_imports};
 
 fn cases(file: &str) -> Vec<(String, String)> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/imports").join(file);
