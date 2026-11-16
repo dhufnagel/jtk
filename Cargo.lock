@@ -97,7 +97,7 @@ dependencies = [
  "im-rc",
  "serde_json",
  "tree-sitter",
- "tree-sitter-java",
+ "tree-sitter-java-orchard",
 ]
 
 [[package]]
@@ -253,10 +253,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "tree-sitter-java"
-version = "0.23.5"
+name = "tree-sitter-java-orchard"
+version = "0.5.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0aa6cbcdc8c679b214e616fd3300da67da0e492e066df01bcf5a5921a71e90d6"
+checksum = "f96fd9e55c4127db78d4ef2ef000da21b730b7d7fed0434b5048b00352d6cda8"
 dependencies = [
  "cc",
  "tree-sitter-language",

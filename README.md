@@ -8,7 +8,7 @@ It ports the original pipeline closely:
 | Module | Ported from |
 |---|---|
 | `input.rs` | `JavaInput`, `JavacTokens` (own lexer instead of javac's) |
-| `ast.rs` | – (converts the [tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java) tree into a javac-shaped AST) |
+| `ast.rs` | – (converts the [tree-sitter-java-orchard](https://codeberg.org/grammar-orchard/tree-sitter-java-orchard) tree into a javac-shaped AST) |
 | `visitor.rs` | `JavaInputAstVisitor`, `Java14InputAstVisitor`, `Java21InputAstVisitor`, `TypeNameClassifier` |
 | `ops.rs` | `OpsBuilder` |
 | `doc.rs` | `doc/*` (`Level`, `Break`, `State`, …): the line-breaking algorithm |
@@ -55,11 +55,16 @@ PJF_TEST=B20128760 cargo test --release -- --nocapture   # one case, prints the 
 cargo run --release --example corpus_check -- <dir>     # crash/idempotency check over a source tree
 ```
 
-Status: 220 of 226 cases pass. The 6 failures are inputs that tree-sitter-java cannot parse:
+Status: 223 of 226 cases pass. The 3 failures are invalid Java that javac's parser accepts but the tree-sitter
+grammar rejects:
 
 - `this(...)` / `super(...)` outside a constructor body (`B26952926`, `palantir-expression-lambda-2`)
-- type annotations on varargs, e.g. `String @A... args` (`B38203081`, `i282`, `i95`)
-- annotations mixing positional and named arguments (`B38352414`, not valid Java but accepted by javac)
+- annotations mixing positional and named arguments (`B38352414`)
+
+The parser is [tree-sitter-java-orchard](https://codeberg.org/grammar-orchard/tree-sitter-java-orchard), a maintained
+fork of tree-sitter-java (which no longer merges contributions). It supports Java 21–25 syntax that tree-sitter-java
+does not, such as qualified record patterns, several patterns in one `case`, statements before `this()`/`super()`,
+and annotated varargs.
 
 ## Comparison with the original
 
@@ -74,8 +79,8 @@ Against palantir-java-format 2.103.0 (native image from Maven Central), with the
 
 | Corpus | Files | Identical | Differing |
 |---|---|---|---|
-| JDK 25 sources (`lib/src.zip`) | 15,227 | 15,224 | 3 – qualified record patterns (`case A.B(...)`, `case A.B _`), which tree-sitter-java cannot parse |
-| palantir-java-format sources + test inputs | 363 | 358 | 5 – the parse failures listed above |
+| JDK 25 sources (`lib/src.zip`) | 15,227 | 15,227 | 0 |
+| palantir-java-format sources + test inputs | 363 | 361 | 2 – the invalid `this(...)` test inputs listed above |
 
 Both report the same 18 "Imports not contiguous" errors on the JDK sources.
 

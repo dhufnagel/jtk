@@ -11,7 +11,7 @@ use tree_sitter::{Parser, Tree};
 thread_local! {
     static PARSER: RefCell<Parser> = RefCell::new({
         let mut parser = Parser::new();
-        parser.set_language(&tree_sitter_java::LANGUAGE.into()).expect("tree-sitter-java version mismatch");
+        parser.set_language(&tree_sitter_java_orchard::LANGUAGE.into()).expect("tree-sitter-java version mismatch");
         parser
     });
     static LAST: RefCell<Option<(String, Tree)>> = const { RefCell::new(None) };

@@ -416,7 +416,7 @@ fn child_by_field<'t>(n: &Node<'t>, name: &'static str) -> Option<Node<'t>> {
     }
     let id = IDS.with_borrow_mut(|ids| {
         *ids.entry(name)
-            .or_insert_with(|| tree_sitter::Language::new(tree_sitter_java::LANGUAGE).field_id_for_name(name))
+            .or_insert_with(|| tree_sitter::Language::new(tree_sitter_java_orchard::LANGUAGE).field_id_for_name(name))
     })?;
     n.child_by_field_id(id.get())
 }
@@ -1264,7 +1264,8 @@ impl<'s> Converter<'s> {
                 Ok(self.mk(n, K::RecordPattern { ty, nested }))
             }
             "record_pattern_component" => {
-                let ch = named_children(n);
+                let mods = self.mods(n)?;
+                let ch: Vec<Node> = named_children(n).into_iter().filter(|c| c.kind() != "modifiers").collect();
                 if ch.len() == 1 {
                     // `_` or a lone identifier
                     let var = VarDecl {
@@ -1282,7 +1283,7 @@ impl<'s> Converter<'s> {
                 let var = VarDecl {
                     start: start_of(n),
                     end: n.end_byte(),
-                    mods: Mods { start: start_of(n), annotations: vec![] },
+                    mods,
                     ty,
                     name: self.text(&ch[1]).into(),
                     init: None,
@@ -1524,8 +1525,36 @@ impl<'s> Converter<'s> {
             }
             "cast_expression" => {
                 let mut cursor = n.walk();
-                let types =
-                    n.children_by_field_name("type", &mut cursor).map(|t| self.ty(&t)).collect::<R<Vec<_>>>()?;
+                let type_nodes: Vec<Node> = n.children_by_field_name("type", &mut cursor).collect();
+                // tree-sitter-java-orchard splits `(@A int) x` into an annotation-only `annotated_type` followed by
+                // the type; merge them back into one annotated type.
+                let mut types = Vec::new();
+                let mut pending: Vec<Tree> = Vec::new();
+                for t in &type_nodes {
+                    let children = named_children(t);
+                    if t.kind() == "annotated_type" && children.iter().all(is_annotation) {
+                        for a in &children {
+                            pending.push(self.annotation(a)?);
+                        }
+                        continue;
+                    }
+                    let mut ty = self.ty(t)?;
+                    if !pending.is_empty() {
+                        let start = pending[0].start;
+                        let mut annotations = std::mem::take(&mut pending);
+                        ty = match ty.kind {
+                            K::Annotated { annotations: inner, base } => {
+                                annotations.extend(inner);
+                                Tree::new(start, ty.end, K::Annotated { annotations, base })
+                            }
+                            other => {
+                                let base = Box::new(Tree::new(ty.start, ty.end, other));
+                                Tree::new(start, ty.end, K::Annotated { annotations, base })
+                            }
+                        };
+                    }
+                    types.push(ty);
+                }
                 let ty = if types.len() == 1 {
                     types.into_iter().next().unwrap()
                 } else {
@@ -1673,11 +1702,19 @@ impl<'s> Converter<'s> {
     }
 
     fn instanceof_mods(&self, n: &Node) -> R<Option<Mods>> {
-        // `x instanceof final Foo f`: tree-sitter keeps `final` as an anonymous child.
-        Ok(all_children(n)
-            .iter()
-            .find(|c| c.kind() == "final")
-            .map(|f| Mods { start: f.start_byte(), annotations: vec![] }))
+        // `x instanceof final Foo f`: the modifiers are a child of the instanceof expression.
+        match named_children(n).into_iter().find(|c| c.kind() == "modifiers") {
+            Some(m) => {
+                let mut annotations = Vec::new();
+                for a in named_children(&m) {
+                    if is_annotation(&a) {
+                        annotations.push(self.annotation(&a)?);
+                    }
+                }
+                Ok(Some(Mods { start: start_of(&m), annotations }))
+            }
+            None => Ok(None),
+        }
     }
 
     fn inferred_param(&self, n: &Node) -> VarDecl {
