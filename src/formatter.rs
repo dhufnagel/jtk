@@ -7,7 +7,7 @@ use crate::input::JavaInput;
 use crate::ops::OpsBuilder;
 use crate::output::{JavaOutput, Replacement};
 use crate::visitor::Visitor;
-use crate::{imports, modifiers, string_wrapper};
+use crate::{imports, modifiers, parse, string_wrapper};
 
 pub const MAX_LINE_LENGTH: i32 = 120;
 
@@ -103,9 +103,7 @@ pub fn format_replacements(text: &str, character_ranges: &[(usize, usize)]) -> R
     }
     let text = reordered.as_deref().unwrap_or(text);
 
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&tree_sitter_java::LANGUAGE.into()).map_err(|e| FormatError(e.to_string()))?;
-    let tree = parser.parse(parser_text(text).as_ref(), None).ok_or_else(|| FormatError("parse failed".into()))?;
+    let tree = parse::parse(text).ok_or_else(|| FormatError("parse failed".into()))?;
     let unit = Converter { src: text }.compilation_unit(&tree.root_node()).map_err(|e| FormatError(e.0))?;
 
     let mut visitor = Visitor::new(OpsBuilder::new(&input), text);
@@ -125,21 +123,4 @@ pub fn format_replacements(text: &str, character_ranges: &[(usize, usize)]) -> R
     // Token ranges refer to the (possibly modifier-reordered) input, as in the original.
     let token_ranges = input.character_ranges_to_token_ranges(character_ranges).map_err(|e| FormatError(e.0))?;
     Ok(output.format_replacements(&token_ranges))
-}
-
-/// tree-sitter only ends line comments at `\n`; replace lone `\r` separators (same length, so positions are kept).
-pub(crate) fn parser_text(text: &str) -> std::borrow::Cow<'_, str> {
-    if !text.contains('\r') {
-        return text.into();
-    }
-    let bytes = text.as_bytes();
-    let mut out = String::with_capacity(text.len());
-    for (i, c) in text.char_indices() {
-        if c == '\r' && bytes.get(i + 1) != Some(&b'\n') {
-            out.push('\n');
-        } else {
-            out.push(c);
-        }
-    }
-    out.into()
 }

@@ -223,10 +223,7 @@ fn java_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// Removes unused imports. Imports used only in javadoc references are kept.
 pub fn remove_unused_imports(contents: &str) -> String {
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&tree_sitter_java::LANGUAGE.into()).unwrap();
-    let parse_text = crate::formatter::parser_text(contents);
-    let Some(tree) = parser.parse(parse_text.as_ref(), None) else {
+    let Some(tree) = crate::parse::parse(contents) else {
         return contents.to_string();
     };
     let root = tree.root_node();

@@ -177,9 +177,7 @@ fn strip_indent(s: &str) -> String {
 }
 
 fn reflow_replacements(column_limit: usize, input: &str) -> Replacements {
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&tree_sitter_java::LANGUAGE.into()).unwrap();
-    let Some(tree) = parser.parse(crate::formatter::parser_text(input).as_ref(), None) else {
+    let Some(tree) = crate::parse::parse(input) else {
         return Vec::new();
     };
     let reflower = Reflower {
