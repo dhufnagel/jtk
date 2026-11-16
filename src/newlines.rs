@@ -26,12 +26,25 @@ pub fn line_offsets(input: &str) -> Vec<usize> {
 
 /// Returns the number of line breaks in the input.
 pub fn count(input: &str) -> usize {
-    line_offsets(input).len() - 1
+    let b = input.as_bytes();
+    // A `\r\n` counts once: count `\n`s plus `\r`s not followed by `\n`.
+    b.iter().enumerate().filter(|&(i, &c)| c == b'\n' || (c == b'\r' && b.get(i + 1) != Some(&b'\n'))).count()
+}
+
+/// The start offset of the last line (0 if there is no line break).
+pub fn last_line_start(input: &str) -> usize {
+    let b = input.as_bytes();
+    match b.iter().rposition(|&c| c == b'\n' || c == b'\r') {
+        Some(i) => i + 1,
+        None => 0,
+    }
 }
 
 /// Returns the byte index of the first break in the input, if any.
 pub fn first_break(input: &str) -> Option<usize> {
-    line_offsets(input).get(1).copied()
+    let b = input.as_bytes();
+    let i = b.iter().position(|&c| c == b'\n' || c == b'\r')?;
+    Some(if b[i] == b'\r' && b.get(i + 1) == Some(&b'\n') { i + 2 } else { i + 1 })
 }
 
 pub fn is_newline(input: &str) -> bool {

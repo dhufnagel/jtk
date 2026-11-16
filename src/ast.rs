@@ -405,8 +405,21 @@ fn err<T>(n: &Node, what: &str) -> R<T> {
     Err(ConvertError(format!("unsupported {what} '{}' at {}", n.kind(), n.start_position().row + 1)))
 }
 
-fn field<'t>(n: &Node<'t>, name: &str) -> R<Node<'t>> {
-    n.child_by_field_name(name).ok_or_else(|| ConvertError(format!("missing field {name} in {}", n.kind())))
+/// `Node::child_by_field_name` looks the name up in the grammar on every call; field ids are cached instead.
+fn child_by_field<'t>(n: &Node<'t>, name: &'static str) -> Option<Node<'t>> {
+    thread_local! {
+        static IDS: std::cell::RefCell<std::collections::HashMap<&'static str, Option<std::num::NonZeroU16>>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    let id = IDS.with_borrow_mut(|ids| {
+        *ids.entry(name)
+            .or_insert_with(|| tree_sitter::Language::new(tree_sitter_java::LANGUAGE).field_id_for_name(name))
+    })?;
+    n.child_by_field_id(id.get())
+}
+
+fn field<'t>(n: &Node<'t>, name: &'static str) -> R<Node<'t>> {
+    child_by_field(n, name).ok_or_else(|| ConvertError(format!("missing field {name} in {}", n.kind())))
 }
 
 fn is_annotation(n: &Node) -> bool {
@@ -607,11 +620,11 @@ impl<'s> Converter<'s> {
         };
         let mods = self.mods(n)?;
         let name = self.text(&field(n, "name")?).to_string();
-        let type_params = match n.child_by_field_name("type_parameters") {
+        let type_params = match child_by_field(n, "type_parameters") {
             Some(tp) => named_children(&tp).iter().map(|t| self.type_parameter(t)).collect::<R<_>>()?,
             None => vec![],
         };
-        let extends = match n.child_by_field_name("superclass") {
+        let extends = match child_by_field(n, "superclass") {
             Some(s) => Some(Box::new(self.ty(&named_children(&s)[0])?)),
             None => None,
         };
@@ -624,12 +637,12 @@ impl<'s> Converter<'s> {
                 None => Ok(vec![]),
             }
         };
-        let mut implements = type_list(n.child_by_field_name("interfaces"))?;
+        let mut implements = type_list(child_by_field(n, "interfaces"))?;
         if kind == ClassKind::Interface {
             let ext = named_children(n).into_iter().find(|c| c.kind() == "extends_interfaces");
             implements = type_list(ext)?;
         }
-        let permits = type_list(n.child_by_field_name("permits"))?;
+        let permits = type_list(child_by_field(n, "permits"))?;
         let mut record_components = Vec::new();
         if kind == ClassKind::Record {
             for p in named_children(&field(n, "parameters")?) {
@@ -672,11 +685,11 @@ impl<'s> Converter<'s> {
     fn enum_constant(&self, n: &Node) -> R<EnumConstant> {
         let mods = self.mods(n)?;
         let name = self.text(&field(n, "name")?).to_string();
-        let args = match n.child_by_field_name("arguments") {
+        let args = match child_by_field(n, "arguments") {
             Some(a) => self.args(&a)?,
             None => vec![],
         };
-        let body = match n.child_by_field_name("body") {
+        let body = match child_by_field(n, "body") {
             Some(b) => Some(named_children(&b).iter().map(|m| self.declaration(m)).collect::<R<_>>()?),
             None => None,
         };
@@ -714,15 +727,15 @@ impl<'s> Converter<'s> {
                 return_type_annotations.push(self.annotation(&c)?);
             }
         }
-        let type_params = match n.child_by_field_name("type_parameters") {
+        let type_params = match child_by_field(n, "type_parameters") {
             Some(tp) => named_children(&tp).iter().map(|t| self.type_parameter(t)).collect::<R<_>>()?,
             None => vec![],
         };
-        let mut ret = match n.child_by_field_name("type") {
+        let mut ret = match child_by_field(n, "type") {
             Some(t) if n.kind() != "constructor_declaration" => Some(self.ty(&t)?),
             _ => None,
         };
-        if let Some(dims) = n.child_by_field_name("dimensions") {
+        if let Some(dims) = child_by_field(n, "dimensions") {
             ret = match ret {
                 Some(r) => Some(self.add_dims(r, &dims)?),
                 None => None,
@@ -731,7 +744,7 @@ impl<'s> Converter<'s> {
         let name = self.text(&field(n, "name")?).to_string();
         let mut params = Vec::new();
         let mut receiver = None;
-        if let Some(ps) = n.child_by_field_name("parameters") {
+        if let Some(ps) = child_by_field(n, "parameters") {
             for p in named_children(&ps) {
                 if p.kind() == "receiver_parameter" {
                     receiver = Some(Box::new(self.receiver_parameter(&p)?));
@@ -748,11 +761,11 @@ impl<'s> Converter<'s> {
                 }
             }
         }
-        let body = match n.child_by_field_name("body") {
+        let body = match child_by_field(n, "body") {
             Some(b) => Some(Box::new(self.block(&b)?)),
             None => None,
         };
-        let default_value = match n.child_by_field_name("value") {
+        let default_value = match child_by_field(n, "value") {
             Some(v) => Some(Box::new(self.element_value(&v)?)),
             None => None,
         };
@@ -817,7 +830,7 @@ impl<'s> Converter<'s> {
             let varargs_dims = vec![self.annotations_in(n, "variadic")?];
             let mut ty =
                 Tree::new(ty.start, decl.start_byte(), K::ArrayType { elem: Box::new(ty), dims: varargs_dims });
-            if let Some(d) = decl.child_by_field_name("dimensions") {
+            if let Some(d) = child_by_field(&decl, "dimensions") {
                 ty = self.add_dims(ty, &d)?;
             }
             return Ok(VarDecl {
@@ -831,7 +844,7 @@ impl<'s> Converter<'s> {
             });
         }
         let mut ty = self.ty(&field(n, "type")?)?;
-        if let Some(d) = n.child_by_field_name("dimensions") {
+        if let Some(d) = child_by_field(n, "dimensions") {
             ty = self.add_dims(ty, &d)?;
         }
         Ok(VarDecl {
@@ -891,12 +904,12 @@ impl<'s> Converter<'s> {
         let mut vars = Vec::new();
         for d in declarators {
             let mut ty = base_ty.clone();
-            if let (Some(t), Some(dims)) = (ty.take(), d.child_by_field_name("dimensions")) {
+            if let (Some(t), Some(dims)) = (ty.take(), child_by_field(&d, "dimensions")) {
                 ty = Some(self.add_dims(t, &dims)?);
             } else {
                 ty = base_ty.clone();
             }
-            let init = match d.child_by_field_name("value") {
+            let init = match child_by_field(&d, "value") {
                 Some(v) => Some(Box::new(self.var_init(&v)?)),
                 None => None,
             };
@@ -955,7 +968,7 @@ impl<'s> Converter<'s> {
             "explicit_constructor_invocation" => {
                 let ctor = field(n, "constructor")?;
                 let mut select = self.mk(&ctor, K::Ident(self.text(&ctor).into()));
-                if let Some(obj) = n.child_by_field_name("object") {
+                if let Some(obj) = child_by_field(n, "object") {
                     let obj = self.expr(&obj)?;
                     select = Tree::new(
                         obj.start,
@@ -963,7 +976,7 @@ impl<'s> Converter<'s> {
                         K::MemberSelect { expr: Box::new(obj), name: self.text(&ctor).into() },
                     );
                 }
-                let type_args = self.type_args(n.child_by_field_name("type_arguments"))?;
+                let type_args = self.type_args(child_by_field(n, "type_arguments"))?;
                 let args = self.args(&field(n, "arguments")?)?;
                 let inv = Tree::new(
                     start_of(n),
@@ -976,7 +989,7 @@ impl<'s> Converter<'s> {
             "if_statement" => K::If {
                 cond: Box::new(self.expr(&field(n, "condition")?)?),
                 then: Box::new(self.stmt(&field(n, "consequence")?)?),
-                else_: match n.child_by_field_name("alternative") {
+                else_: match child_by_field(n, "alternative") {
                     Some(a) => Some(Box::new(self.stmt(&a)?)),
                     None => None,
                 },
@@ -1007,7 +1020,7 @@ impl<'s> Converter<'s> {
                     n.children_by_field_name("update", &mut cursor).map(|c| self.expr(&c)).collect::<R<Vec<_>>>()?;
                 K::For {
                     init,
-                    cond: match n.child_by_field_name("condition") {
+                    cond: match child_by_field(n, "condition") {
                         Some(c) => Some(Box::new(self.expr(&c)?)),
                         None => None,
                     },
@@ -1019,7 +1032,7 @@ impl<'s> Converter<'s> {
                 let mods = self.mods(n)?;
                 let ty_node = field(n, "type")?;
                 let mut ty = if self.text(&ty_node) == "var" { None } else { Some(self.ty(&ty_node)?) };
-                if let (Some(t), Some(d)) = (ty.take(), n.child_by_field_name("dimensions")) {
+                if let (Some(t), Some(d)) = (ty.take(), child_by_field(n, "dimensions")) {
                     ty = Some(self.add_dims(t, &d)?);
                 } else if self.text(&ty_node) != "var" {
                     ty = Some(self.ty(&ty_node)?);
@@ -1050,7 +1063,7 @@ impl<'s> Converter<'s> {
             }
             "try_statement" | "try_with_resources_statement" => {
                 let mut resources = Vec::new();
-                if let Some(rs) = n.child_by_field_name("resources") {
+                if let Some(rs) = child_by_field(n, "resources") {
                     for r in named_children(&rs) {
                         resources.push(self.resource(&r)?);
                     }
@@ -1095,10 +1108,10 @@ impl<'s> Converter<'s> {
     }
 
     fn resource(&self, n: &Node) -> R<Tree> {
-        if let Some(ty_node) = n.child_by_field_name("type") {
+        if let Some(ty_node) = child_by_field(n, "type") {
             let mods = self.mods(n)?;
             let mut ty = if self.text(&ty_node) == "var" { None } else { Some(self.ty(&ty_node)?) };
-            if let (Some(t), Some(d)) = (ty.take(), n.child_by_field_name("dimensions")) {
+            if let (Some(t), Some(d)) = (ty.take(), child_by_field(n, "dimensions")) {
                 ty = Some(self.add_dims(t, &d)?);
             } else if self.text(&ty_node) != "var" {
                 ty = Some(self.ty(&ty_node)?);
@@ -1109,7 +1122,7 @@ impl<'s> Converter<'s> {
                 mods,
                 ty: ty.map(Box::new),
                 name: self.text(&field(n, "name")?).into(),
-                init: match n.child_by_field_name("value") {
+                init: match child_by_field(n, "value") {
                     Some(v) => Some(Box::new(self.expr(&v)?)),
                     None => None,
                 },
@@ -1391,8 +1404,8 @@ impl<'s> Converter<'s> {
             "method_invocation" => {
                 let name_node = field(n, "name")?;
                 let name = self.text(&name_node).to_string();
-                let type_args = self.type_args(n.child_by_field_name("type_arguments"))?;
-                let select = match n.child_by_field_name("object") {
+                let type_args = self.type_args(child_by_field(n, "type_arguments"))?;
+                let select = match child_by_field(n, "object") {
                     Some(obj) => {
                         let mut expr = self.expr(&obj)?;
                         // `Outer.super.method()`
@@ -1462,12 +1475,12 @@ impl<'s> Converter<'s> {
             },
             "instanceof_expression" => {
                 let expr = Box::new(self.expr(&field(n, "left")?)?);
-                let target = if let Some(p) = n.child_by_field_name("pattern") {
+                let target = if let Some(p) = child_by_field(n, "pattern") {
                     self.pattern(&p)?
                 } else {
                     let ty_node = field(n, "right")?;
                     let ty = self.ty(&ty_node)?;
-                    match n.child_by_field_name("name") {
+                    match child_by_field(n, "name") {
                         Some(name) => {
                             let mods = self.instanceof_mods(n)?;
                             let var = VarDecl {
@@ -1543,7 +1556,7 @@ impl<'s> Converter<'s> {
                 };
                 K::NewClass {
                     outer,
-                    type_args: self.type_args(n.child_by_field_name("type_arguments"))?,
+                    type_args: self.type_args(child_by_field(n, "type_arguments"))?,
                     ident: Box::new(ident),
                     args: self.args(&field(n, "arguments")?)?,
                     body,
@@ -1587,7 +1600,7 @@ impl<'s> Converter<'s> {
                         }
                     }
                 }
-                let init = match n.child_by_field_name("value") {
+                let init = match child_by_field(n, "value") {
                     Some(v) => match self.array_initializer(&v)?.kind {
                         K::NewArray { init, .. } => init,
                         _ => None,
@@ -1648,11 +1661,11 @@ impl<'s> Converter<'s> {
     fn misparsed_cast(&self, n: &Node) -> bool {
         let mut cursor = n.walk();
         let types: Vec<Node> = n.children_by_field_name("type", &mut cursor).collect();
-        let Some(value) = n.child_by_field_name("value") else { return false };
+        let Some(value) = child_by_field(n, "value") else { return false };
         types.len() == 1
             && matches!(types[0].kind(), "type_identifier" | "scoped_type_identifier")
             && value.kind() == "unary_expression"
-            && value.child_by_field_name("operator").is_some_and(|op| matches!(self.text(&op), "+" | "-"))
+            && child_by_field(&value, "operator").is_some_and(|op| matches!(self.text(&op), "+" | "-"))
     }
 
     fn instanceof_mods(&self, n: &Node) -> R<Option<Mods>> {

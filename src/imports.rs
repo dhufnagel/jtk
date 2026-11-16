@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use tree_sitter::Node;
 
-use crate::input::{Tok, build_toks};
+use crate::input::{Tok, build_toks_until};
 use crate::newlines;
 
 // ------------------------------------------------------------------------------------------------------------------
@@ -30,18 +30,11 @@ fn is_java_identifier_start(c: char) -> bool {
 
 /// Reorders the imports in `text` (a complete Java program) in Palantir (= Google) style.
 pub fn reorder_imports(text: &str) -> Result<String, String> {
-    let Ok(mut toks) = build_toks(text) else {
+    // Imports must precede the first type declaration, so lexing stops there.
+    let Ok(toks) = build_toks_until(text, true) else {
         // Lexing errors are reported later by the formatter.
         return Ok(text.to_string());
     };
-    // Stop at the first type declaration: imports must precede it.
-    if let Some(stop) =
-        toks.iter().position(|t| t.is_token && matches!(t.text.as_str(), "class" | "interface" | "enum"))
-    {
-        let position = toks[stop].position;
-        toks.truncate(stop);
-        toks.push(Tok { index: -1, text: String::new(), position, column: 0, is_token: true });
-    }
     Orderer { text, toks, line_separator: newlines::guess_line_separator(text) }.reorder()
 }
 
@@ -223,67 +216,132 @@ fn java_cmp(a: &str, b: &str) -> std::cmp::Ordering {
 
 /// Removes unused imports. Imports used only in javadoc references are kept.
 pub fn remove_unused_imports(contents: &str) -> String {
-    let Some(tree) = crate::parse::parse(contents) else {
-        return contents.to_string();
-    };
+    match used_import_names(contents) {
+        Some(used) => remove_imports(contents, &used),
+        None => contents.to_string(),
+    }
+}
+
+/// The simple names of imports in `source` that are used in the code or in javadoc references; `None` if the
+/// source does not parse.
+///
+/// Formatting only changes whitespace and the order of modifiers, so this can be computed on the unformatted input
+/// (whose syntax tree is already cached) and applied to the formatted output with [`remove_imports`].
+pub fn used_import_names(source: &str) -> Option<HashSet<String>> {
+    let tree = crate::parse::parse(source)?;
     let root = tree.root_node();
     if root.has_error() {
         // Errors are reported by the formatter.
-        return contents.to_string();
+        return None;
     }
-    let mut used = HashSet::new();
-    collect_used_names(root, contents, &mut used);
     let mut cursor = root.walk();
-    let children: Vec<Node> = root.children(&mut cursor).collect();
-    let package = children.iter().find(|c| c.kind() == "package_declaration").and_then(|p| {
-        let mut cursor = p.walk();
-        p.named_children(&mut cursor)
-            .find(|c| matches!(c.kind(), "identifier" | "scoped_identifier"))
-            .map(|n| contents[n.byte_range()].to_string())
-    });
+    // Only identifiers spelled like the simple name of an import matter, so only those are classified.
+    let candidates: HashSet<&str> = root
+        .children(&mut cursor)
+        .filter(|c| c.kind() == "import_declaration")
+        .filter_map(|imp| {
+            let mut cursor = imp.walk();
+            let name = imp.named_children(&mut cursor).find(|c| !is_comment(c))?;
+            let simple = match name.kind() {
+                "scoped_identifier" => name.child_by_field_name("name")?,
+                _ => name,
+            };
+            Some(&source[simple.byte_range()])
+        })
+        .collect();
+    let mut used = HashSet::new();
+    if !candidates.is_empty() {
+        collect_used_names(root, source, &candidates, &mut used);
+    }
+    Some(used)
+}
+
+/// An import declaration found by scanning tokens.
+struct ImportDecl {
+    start: usize,
+    /// After the terminating `;`.
+    end: usize,
+    /// The name without the last segment (`a.b` for `a.b.C` and for `a.b.*`).
+    qualifier: String,
+    simple_name: String,
+    is_wildcard: bool,
+}
+
+/// Finds the package name and the import declarations by scanning the tokens before the first type declaration.
+fn scan_imports(contents: &str) -> Option<(Option<String>, Vec<ImportDecl>)> {
+    let toks = build_toks_until(contents, true).ok()?;
+    let tokens: Vec<&Tok> = toks.iter().filter(|t| t.is_token && !t.text.is_empty()).collect();
+    let mut package = None;
+    let mut imports = Vec::new();
+    let mut i = 0;
+    while i < tokens.len() {
+        let keyword = tokens[i].text.as_str();
+        if keyword != "package" && keyword != "import" {
+            i += 1;
+            continue;
+        }
+        let start = tokens[i].position;
+        let mut j = i + 1;
+        if keyword == "import" && tokens.get(j).is_some_and(|t| t.text == "static") {
+            j += 1;
+        }
+        let mut parts: Vec<&str> = Vec::new();
+        while j < tokens.len() && tokens[j].text != ";" {
+            if tokens[j].text != "." {
+                parts.push(&tokens[j].text);
+            }
+            j += 1;
+        }
+        let end = tokens.get(j).map_or(contents.len(), |t| t.position + 1);
+        if keyword == "package" {
+            package = Some(parts.join("."));
+        } else if let Some((&last, init)) = parts.split_last() {
+            imports.push(ImportDecl {
+                start,
+                end,
+                qualifier: init.join("."),
+                simple_name: last.to_string(),
+                is_wildcard: last == "*",
+            });
+        }
+        i = j + 1;
+    }
+    Some((package, imports))
+}
+
+/// Removes the imports whose simple name is not in `used` (see [`used_import_names`]), as well as imports from
+/// `java.lang` and from the file's own package.
+pub fn remove_imports(contents: &str, used: &HashSet<String>) -> String {
+    let Some((package, imports)) = scan_imports(contents) else {
+        return contents.to_string();
+    };
     let sep = newlines::guess_line_separator(contents);
     let mut replacements = Vec::new();
-    for imp in children.iter().filter(|c| c.kind() == "import_declaration") {
-        let mut cursor = imp.walk();
-        let parts: Vec<Node> = imp.named_children(&mut cursor).filter(|c| !is_comment(c)).collect();
-        let Some(name) = parts.first() else { continue };
-        let is_wildcard = parts.iter().any(|p| p.kind() == "asterisk");
-        let (qualifier, simple_name) = match name.kind() {
-            "scoped_identifier" => (
-                strip_ws(&contents[name.child_by_field_name("scope").unwrap().byte_range()]),
-                contents[name.child_by_field_name("name").unwrap().byte_range()].to_string(),
-            ),
-            _ => (String::new(), contents[name.byte_range()].to_string()),
-        };
-        let qualifier = if is_wildcard { strip_ws(&contents[name.byte_range()]) } else { qualifier };
-        let unused = if qualifier == "java.lang" || package.as_deref().map(strip_ws).as_deref() == Some(&qualifier) {
+    for imp in imports {
+        let unused = if imp.qualifier == "java.lang" || package.as_deref() == Some(imp.qualifier.as_str()) {
             true
-        } else if is_wildcard {
+        } else if imp.is_wildcard {
             false
         } else {
-            !used.contains(&simple_name)
+            !used.contains(&imp.simple_name)
         };
         if !unused {
             continue;
         }
-        let mut end = imp.end_byte();
+        let mut end = imp.end;
         if let Some(i) = contents[end..].find(|c| c != ' ') {
             end += i;
         }
         if end + sep.len() < contents.len() && contents[end..].starts_with(sep) {
             end += sep.len();
         }
-        replacements.push((imp.start_byte(), end));
+        replacements.push((imp.start, end));
     }
     let mut result = contents.to_string();
     for (start, end) in replacements.into_iter().rev() {
         result.replace_range(start..end, "");
     }
     result
-}
-
-fn strip_ws(s: &str) -> String {
-    s.chars().filter(|c| !c.is_whitespace()).collect()
 }
 
 fn is_comment(n: &Node) -> bool {
@@ -349,32 +407,48 @@ fn is_name_reference(n: &Node) -> bool {
     }
 }
 
-fn collect_used_names(n: Node, src: &str, used: &mut HashSet<String>) {
-    match n.kind() {
-        "import_declaration" => return,
-        "identifier" | "type_identifier" => {
-            if is_name_reference(&n) {
-                used.insert(src[n.byte_range()].to_string());
+fn collect_used_names(root: Node, src: &str, candidates: &HashSet<&str>, used: &mut HashSet<String>) {
+    // Iterative pre-order traversal with a single cursor.
+    let mut cursor = root.walk();
+    loop {
+        let n = cursor.node();
+        let descend = match n.kind() {
+            "import_declaration" => false,
+            "identifier" | "type_identifier" => {
+                let name = &src[n.byte_range()];
+                // Classifying needs `Node::parent`, which is slow, so only do it when the answer can matter.
+                if candidates.contains(name) && !used.contains(name) && is_name_reference(&n) {
+                    used.insert(name.to_string());
+                }
+                false
             }
-            return;
+            "block_comment" => {
+                let text = &src[n.byte_range()];
+                if text.starts_with("/**") {
+                    collect_javadoc_references(text, used);
+                }
+                false
+            }
+            // Markdown documentation comments (Java 23): block tags as in javadoc, plus reference links like
+            // `[Foo]`, `[text][Foo]` or `[Foo#bar(Baz)]`.
+            "line_comment" => {
+                let text = &src[n.byte_range()];
+                if text.starts_with("///") {
+                    collect_javadoc_references(text, used);
+                    collect_markdown_references(text, used);
+                }
+                false
+            }
+            _ => true,
+        };
+        if descend && cursor.goto_first_child() {
+            continue;
         }
-        "block_comment" if src[n.byte_range()].starts_with("/**") => {
-            collect_javadoc_references(&src[n.byte_range()], used);
-            return;
+        while !cursor.goto_next_sibling() {
+            if !cursor.goto_parent() {
+                return;
+            }
         }
-        // Markdown documentation comments (Java 23): block tags as in javadoc, plus reference links like
-        // `[Foo]`, `[text][Foo]` or `[Foo#bar(Baz)]`.
-        "line_comment" if src[n.byte_range()].starts_with("///") => {
-            let text = &src[n.byte_range()];
-            collect_javadoc_references(text, used);
-            collect_markdown_references(text, used);
-            return;
-        }
-        _ => {}
-    }
-    let mut cursor = n.walk();
-    for c in n.children(&mut cursor) {
-        collect_used_names(c, src, used);
     }
 }
 

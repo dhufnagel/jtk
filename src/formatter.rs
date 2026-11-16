@@ -59,7 +59,10 @@ fn with_large_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
 fn format_on_current_thread(text: &str, options: &FormatOptions) -> Result<String, FormatError> {
     let mut formatted = format_without_reflow(text)?;
     if options.remove_unused_imports {
-        formatted = imports::remove_unused_imports(&formatted);
+        // Formatting does not change which names are used, so the input's (cached) syntax tree is analyzed.
+        if let Some(used) = imports::used_import_names(text) {
+            formatted = imports::remove_imports(&formatted, &used);
+        }
     }
     if options.sort_imports {
         formatted = imports::reorder_imports(&formatted).map_err(FormatError)?;
@@ -102,7 +105,6 @@ pub fn format_replacements(text: &str, character_ranges: &[(usize, usize)]) -> R
         input = JavaInput::new(reordered).map_err(|e| FormatError(e.0))?;
     }
     let text = reordered.as_deref().unwrap_or(text);
-
     let tree = parse::parse(text).ok_or_else(|| FormatError("parse failed".into()))?;
     let unit = Converter { src: text }.compilation_unit(&tree.root_node()).map_err(|e| FormatError(e.0))?;
 
@@ -112,7 +114,6 @@ pub fn format_replacements(text: &str, character_ranges: &[(usize, usize)]) -> R
     builder.sync(text.len());
     builder.drain();
     let ops = builder.build().map_err(FormatError)?;
-
     let (docs, root) = Docs::build(&input, ops.ops);
     let comments = CommentsHelper::new(input.line_separator, MAX_LINE_LENGTH as usize);
     let layout = Layout { docs: &docs, comments: &comments, max_width: MAX_LINE_LENGTH };

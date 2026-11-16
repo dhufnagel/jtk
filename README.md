@@ -65,8 +65,11 @@ Against palantir-java-format 2.103.0 (native image from Maven Central), with the
 | JDK 25 sources (`lib/src.zip`) | 15,227 | 15,224 | 3 – qualified record patterns (`case A.B(...)`, `case A.B _`), which tree-sitter-java cannot parse |
 | palantir-java-format sources + test inputs | 363 | 358 | 5 – the parse failures listed above |
 
-Both report the same 18 "Imports not contiguous" errors on the JDK sources. Formatting the JDK takes 17 s with this
-port and 107 s with the original native image (8 parallel processes).
+Both report the same 18 "Imports not contiguous" errors on the JDK sources.
+
+Performance on the same JDK sources (one command per tool, which formats files in parallel on all cores): 11 s for
+this port, 107 s for the original native image. On a single core, 1,456 files from `java.base` and others take 6.9 s
+(`scripts/bench.sh`).
 
 ## Not ported
 

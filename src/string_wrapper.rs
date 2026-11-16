@@ -68,8 +68,13 @@ fn ranges_after_applied_replacements(replacements: &Replacements) -> Vec<(usize,
     result
 }
 
+/// Whether reflowing could change anything: there is a text block, or a string literal on an overlong line. (The
+/// original only checks for overlong lines; when none contains a string, it computes no replacements and leaves the
+/// input unchanged, so the stricter check here is equivalent and avoids parsing.)
 fn need_wrapping(column_limit: usize, input: &str) -> bool {
-    newlines::lines(input).iter().any(|line| jlen(line) > column_limit || line.contains(TEXT_BLOCK_DELIMITER))
+    newlines::lines(input)
+        .iter()
+        .any(|line| line.contains(TEXT_BLOCK_DELIMITER) || (line.contains('"') && jlen(line) > column_limit))
 }
 
 /// `TreeRangeMap.put`: a new replacement overrides any overlapping ones (in practice, identical ranges produced by

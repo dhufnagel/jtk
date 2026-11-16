@@ -3,8 +3,6 @@
 //! The input is split into [`Tok`]s (tokens, comments, newlines and runs of blanks). Multi-character operators are
 //! split into single-character toks, as in the original. Every non-token tok is attached to a [`Token`].
 
-use std::collections::HashMap;
-
 use crate::newlines::{self, jlen};
 
 /// A closed-open range of tok indices. Empty ranges are represented by `lo >= hi`.
@@ -92,7 +90,6 @@ pub struct JavaInput {
     line_starts: Vec<usize>,
     /// Sorted `(lo, hi, token index)` triples: closed position ranges covered by each token.
     position_tokens: Vec<(usize, usize, usize)>,
-    position_to_column: HashMap<usize, usize>,
     k_to_token: Vec<usize>,
     pub line_separator: &'static str,
 }
@@ -116,7 +113,12 @@ fn is_ident_part(c: char) -> bool {
 }
 
 /// Lex the input into raw `(kind, start, end)` toks.
-fn lex(text: &str) -> Result<Vec<(RawKind, usize, usize)>, LexError> {
+/// A raw tok: its kind and byte range.
+type RawTok = (RawKind, usize, usize);
+
+/// Lexes the input. With `stop_at_type`, lexing stops before the first `class`, `interface` or `enum` keyword, whose
+/// position is returned (as with javac's stop tokens in `ImportOrderer`).
+fn lex(text: &str, stop_at_type: bool) -> Result<(Vec<RawTok>, Option<usize>), LexError> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;
@@ -190,6 +192,9 @@ fn lex(text: &str) -> Result<Vec<(RawKind, usize, usize)>, LexError> {
             while i < n && is_ident_part(char_at(i)) {
                 i += char_at(i).len_utf8();
             }
+            if stop_at_type && matches!(&text[start..i], "class" | "interface" | "enum") {
+                return Ok((out, Some(start)));
+            }
             out.push((RawKind::Token, start, i));
         } else {
             // Operators are lexed like javac (maximal munch) and split into single-character toks later.
@@ -197,7 +202,7 @@ fn lex(text: &str) -> Result<Vec<(RawKind, usize, usize)>, LexError> {
             out.push((RawKind::Token, start, i));
         }
     }
-    Ok(out)
+    Ok((out, None))
 }
 
 /// javac's operator tokens (plus `...`), longest first.
@@ -270,13 +275,19 @@ fn lex_number(b: &[u8], mut i: usize) -> usize {
 }
 
 fn update_column(column: usize, text: &str) -> usize {
-    let offsets = newlines::line_offsets(text);
-    let last = *offsets.last().unwrap();
+    let last = newlines::last_line_start(text);
     if last > 0 { jlen(&text[last..]) } else { column + jlen(text) }
 }
 
 pub(crate) fn build_toks(text: &str) -> Result<Vec<Tok>, LexError> {
-    let raw = lex(text)?;
+    build_toks_until(text, false)
+}
+
+/// Like [`build_toks`], but with `stop_at_type` the toks end before the first type declaration keyword, followed by
+/// an empty EOF tok at its position.
+pub(crate) fn build_toks_until(text: &str, stop_at_type: bool) -> Result<Vec<Tok>, LexError> {
+    let (raw, stop) = lex(text, stop_at_type)?;
+    let end = stop.unwrap_or(text.len());
     let mut toks = Vec::new();
     let mut kn = 0;
     let mut column = 0;
@@ -319,7 +330,7 @@ pub(crate) fn build_toks(text: &str) -> Result<Vec<Tok>, LexError> {
             column = update_column(column, original);
         }
     }
-    toks.push(Tok { index: kn, text: String::new(), position: text.len(), column, is_token: true });
+    toks.push(Tok { index: kn, text: String::new(), position: end, column, is_token: true });
     Ok(toks)
 }
 
@@ -406,7 +417,6 @@ impl JavaInput {
                 }
             }
         }
-        let position_to_column = toks.iter().map(|t| (t.position, t.column)).collect();
         let tokens = build_tokens(&toks);
         let mut input = JavaInput {
             line_separator: newlines::guess_line_separator(text),
@@ -418,7 +428,6 @@ impl JavaInput {
             line_count,
             line_starts: newlines::line_offsets(text),
             position_tokens: Vec::new(),
-            position_to_column,
             k_to_token: Vec::new(),
         };
         let mut position_tokens = Vec::new();
@@ -483,7 +492,9 @@ impl JavaInput {
     }
 
     pub fn column_at(&self, position: usize) -> Option<usize> {
-        self.position_to_column.get(&position).copied()
+        // Toks are sorted by (distinct) position.
+        let i = self.toks.binary_search_by_key(&position, |t| t.position).ok()?;
+        Some(self.toks[i].column)
     }
 
     pub fn token_for_k(&self, k: i32) -> usize {

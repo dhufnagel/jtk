@@ -7,7 +7,30 @@
 use std::cell::OnceCell;
 use std::rc::Rc;
 
-use im_rc::{HashMap as PMap, HashSet as PSet};
+use std::hash::{BuildHasherDefault, Hasher};
+
+/// A multiplicative hasher for the small integer ids (docs, break tags) used as keys in [`State`]; much cheaper than
+/// the default SipHash.
+#[derive(Default)]
+pub struct IdHasher(u64);
+
+impl Hasher for IdHasher {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for &b in bytes {
+            self.0 = (self.0.rotate_left(5) ^ b as u64).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+        }
+    }
+    fn write_usize(&mut self, n: usize) {
+        self.0 = (n as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+    }
+}
+
+type IdBuild = BuildHasherDefault<IdHasher>;
+type PMap<K, V> = im_rc::HashMap<K, V, IdBuild>;
+type PSet<K> = im_rc::HashSet<K, IdBuild>;
 
 use crate::comments::CommentsHelper;
 use crate::input::{JavaInput, Range};
@@ -193,6 +216,7 @@ pub struct Doc {
     width: OnceCell<f32>,
     flat: OnceCell<Rc<str>>,
     range: OnceCell<Range>,
+    starts_with_break: OnceCell<StartsWithBreak>,
 }
 
 pub struct SplitsBreaks {
@@ -264,7 +288,13 @@ impl<'a> Docs<'a> {
     }
 
     fn push(&mut self, kind: DocKind) -> DocId {
-        self.docs.push(Doc { kind, width: OnceCell::new(), flat: OnceCell::new(), range: OnceCell::new() });
+        self.docs.push(Doc {
+            kind,
+            width: OnceCell::new(),
+            flat: OnceCell::new(),
+            range: OnceCell::new(),
+            starts_with_break: OnceCell::new(),
+        });
         self.docs.len() - 1
     }
 
@@ -417,8 +447,9 @@ impl<'a> Docs<'a> {
         })
     }
 
+    /// Port of `StartsWithBreakVisitor` (memoized: docs are immutable once built).
     fn starts_with_break(&self, id: DocId) -> StartsWithBreak {
-        match &self.docs[id].kind {
+        *self.docs[id].starts_with_break.get_or_init(|| match &self.docs[id].kind {
             DocKind::Break(_) => StartsWithBreak::Yes,
             DocKind::Level(l) => l
                 .docs
@@ -427,7 +458,7 @@ impl<'a> Docs<'a> {
                 .find(|&r| r != StartsWithBreak::Empty)
                 .unwrap_or(StartsWithBreak::Empty),
             _ => StartsWithBreak::No,
-        }
+        })
     }
 
     /// Port of `CountWidthUntilBreakVisitor`.
