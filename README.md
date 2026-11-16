@@ -35,6 +35,8 @@ The command line is compatible with the original's (`--help` lists all options):
 `--output-replacements`, `--version` and `@argfile`. Like the original, it formats, removes unused imports, sorts
 imports and reflows long strings, and processes files in parallel.
 
+An extension for Visual Studio Code is in [`editors/vscode`](editors/vscode).
+
 Differences from the original command line:
 
 - Only the Palantir style exists. `--palantir` is accepted and implied; `--aosp` is rejected. (The original uses the

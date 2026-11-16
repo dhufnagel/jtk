@@ -1,0 +1,84 @@
+{
+  "name": "jtk",
+  "displayName": "jtk – Java formatter",
+  "description": "Fast Java formatter, compatible with palantir-java-format (same output, no JVM).",
+  "version": "0.1.0",
+  "publisher": "dhufnagel",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dhufnagel/jtk.git",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Formatters"
+  ],
+  "keywords": [
+    "java",
+    "formatter",
+    "palantir-java-format"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onLanguage:java"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "jtk.showOutput",
+        "title": "jtk: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "jtk",
+      "properties": {
+        "jtk.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Path to the `jtk` executable. If empty, the binary bundled with the extension is used, falling back to `jtk` on the `PATH`.",
+          "scope": "machine-overridable"
+        },
+        "jtk.sortImports": {
+          "type": "boolean",
+          "default": true,
+          "description": "Sort imports when formatting a whole document."
+        },
+        "jtk.removeUnusedImports": {
+          "type": "boolean",
+          "default": true,
+          "description": "Remove unused imports when formatting a whole document."
+        },
+        "jtk.reflowLongStrings": {
+          "type": "boolean",
+          "default": true,
+          "description": "Reflow string literals that exceed the column limit."
+        },
+        "jtk.timeout": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 1000,
+          "description": "Maximum time in milliseconds to wait for jtk to format a document."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test out/test/",
+    "bundle-binary": "node scripts/bundle-binary.mjs",
+    "package": "npm run compile && npm run bundle-binary && vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "~1.90.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.9.0"
+  }
+}
