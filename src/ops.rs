@@ -59,7 +59,7 @@ pub struct OpsBuilder<'a> {
     next_tag: BreakTag,
     last_partial_format_boundary: Option<usize>,
     partial_format_ranges: Vec<(i32, i32)>,
-    pub error: Option<String>,
+    pub error: Option<crate::formatter::FormatError>,
 }
 
 impl<'a> OpsBuilder<'a> {
@@ -85,7 +85,8 @@ impl<'a> OpsBuilder<'a> {
 
     fn fail(&mut self, message: String) {
         if self.error.is_none() {
-            self.error = Some(message);
+            let position = self.input_position.clamp(0, self.input.text.len() as i64) as usize;
+            self.error = Some(crate::formatter::FormatError::at_offset(&self.input.text, position, message));
         }
     }
 
@@ -252,8 +253,7 @@ impl<'a> OpsBuilder<'a> {
             }));
         } else if real_or_imaginary == RealOrImaginary::Real {
             let peek = self.peek_token().unwrap_or("<EOF>").to_string();
-            let line = self.input.line_number(self.input_position.max(0) as usize);
-            self.fail(format!("line {line}: expected token: '{peek}'; generated {token} instead"));
+            self.fail(format!("expected token: '{peek}'; generated {token} instead"));
         }
     }
 
@@ -337,7 +337,7 @@ impl<'a> OpsBuilder<'a> {
     }
 
     /// Build the final list of ops, splicing in comments.
-    pub fn build(mut self) -> Result<OpsOutput, String> {
+    pub fn build(mut self) -> Result<OpsOutput, crate::formatter::FormatError> {
         self.mark_for_partial_format();
         if let Some(e) = self.error.take() {
             return Err(e);

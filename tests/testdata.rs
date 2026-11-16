@@ -46,7 +46,7 @@ fn testdata() {
                 }
                 failed.push(format!("{name}: {}", first_diff(&expected, &actual)))
             }
-            Ok(Err(e)) => failed.push(format!("{name}: error: {e}")),
+            Ok(Err(e)) => failed.push(format!("{name}: {e}")),
             Err(_) => failed.push(format!("{name}: panic")),
         }
         // Idempotency (like FormatterIntegrationTest.idempotent{LF,CR,CRLF}): formatting the expected output with
@@ -63,7 +63,7 @@ fn testdata() {
             match std::panic::catch_unwind(|| format_without_reflow(&mangled)) {
                 Ok(Ok(out)) if out == mangled => {}
                 Ok(Ok(out)) => idempotency.push(format!("{name} ({sep:?}): {}", first_diff(&mangled, &out))),
-                Ok(Err(e)) => idempotency.push(format!("{name} ({sep:?}): error: {e}")),
+                Ok(Err(e)) => idempotency.push(format!("{name} ({sep:?}): {e}")),
                 Err(_) => idempotency.push(format!("{name} ({sep:?}): panic")),
             }
         }

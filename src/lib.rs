@@ -1,6 +1,7 @@
 //! A Rust port of palantir-java-format, limited to formatting Java source code.
 
 pub mod ast;
+pub mod cli;
 pub mod comments;
 pub mod doc;
 pub mod formatter;
@@ -14,4 +15,7 @@ pub mod parse;
 pub mod string_wrapper;
 pub mod visitor;
 
-pub use formatter::{FormatError, FormatOptions, format, format_source, format_without_reflow};
+pub use formatter::{
+    FormatError, FormatOptions, fix_imports, format, format_file, format_replacements_with_reflow, format_source,
+    format_without_reflow,
+};

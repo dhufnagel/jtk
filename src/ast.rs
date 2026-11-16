@@ -396,13 +396,16 @@ fn start_of(n: &Node) -> usize {
     n.start_byte()
 }
 
-#[derive(Debug)]
-pub struct ConvertError(pub String);
+pub type ConvertError = crate::formatter::FormatError;
 
 type R<T> = Result<T, ConvertError>;
 
 fn err<T>(n: &Node, what: &str) -> R<T> {
-    Err(ConvertError(format!("unsupported {what} '{}' at {}", n.kind(), n.start_position().row + 1)))
+    Err(ConvertError::at(
+        n.start_position().row + 1,
+        n.start_position().column + 1,
+        format!("unsupported {what} '{}'", n.kind()),
+    ))
 }
 
 /// `Node::child_by_field_name` looks the name up in the grammar on every call; field ids are cached instead.
@@ -419,7 +422,7 @@ fn child_by_field<'t>(n: &Node<'t>, name: &'static str) -> Option<Node<'t>> {
 }
 
 fn field<'t>(n: &Node<'t>, name: &'static str) -> R<Node<'t>> {
-    child_by_field(n, name).ok_or_else(|| ConvertError(format!("missing field {name} in {}", n.kind())))
+    child_by_field(n, name).ok_or_else(|| ConvertError::new(format!("missing field {name} in {}", n.kind())))
 }
 
 fn is_annotation(n: &Node) -> bool {
@@ -437,7 +440,8 @@ impl<'s> Converter<'s> {
 
     pub fn compilation_unit(&self, root: &Node) -> R<Tree> {
         if root.has_error() {
-            return Err(ConvertError(format!("syntax error near line {}", first_error_line(root))));
+            let error = first_error(root);
+            return Err(ConvertError::at_offset(self.src, error.start_byte(), "syntax error"));
         }
         let mut package = None;
         let mut imports = Vec::new();
@@ -455,7 +459,7 @@ impl<'s> Converter<'s> {
                             name = Some(Box::new(self.name(&p)?));
                         }
                     }
-                    package = Some((annotations, name.ok_or_else(|| ConvertError("package".into()))?));
+                    package = Some((annotations, name.ok_or_else(|| ConvertError::new("package"))?));
                 }
                 "import_declaration" => {
                     let is_static = all_children(&c).iter().any(|x| x.kind() == "static");
@@ -825,8 +829,8 @@ impl<'s> Converter<'s> {
                     _ => ty = Some(self.ty(&c)?),
                 }
             }
-            let decl = decl.ok_or_else(|| ConvertError("spread".into()))?;
-            let ty = ty.ok_or_else(|| ConvertError("spread type".into()))?;
+            let decl = decl.ok_or_else(|| ConvertError::new("spread"))?;
+            let ty = ty.ok_or_else(|| ConvertError::new("spread type"))?;
             let varargs_dims = vec![self.annotations_in(n, "variadic")?];
             let mut ty =
                 Tree::new(ty.start, decl.start_byte(), K::ArrayType { elem: Box::new(ty), dims: varargs_dims });
@@ -1689,17 +1693,18 @@ impl<'s> Converter<'s> {
     }
 }
 
-fn first_error_line(n: &Node) -> usize {
+/// The first error or missing node in the tree.
+fn first_error<'t>(n: &Node<'t>) -> Node<'t> {
     if n.is_error() || n.is_missing() {
-        return n.start_position().row + 1;
+        return *n;
     }
     let mut cursor = n.walk();
     for c in n.children(&mut cursor) {
         if c.has_error() {
-            return first_error_line(&c);
+            return first_error(&c);
         }
     }
-    n.start_position().row + 1
+    *n
 }
 
 fn binary_precedence(op: &str) -> i32 {

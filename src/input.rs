@@ -75,8 +75,7 @@ pub struct Token {
     pub after: Vec<usize>,
 }
 
-#[derive(Debug)]
-pub struct LexError(pub String);
+pub type LexError = crate::formatter::FormatError;
 
 pub struct JavaInput {
     pub text: String,
@@ -141,7 +140,7 @@ fn lex(text: &str, stop_at_type: bool) -> Result<(Vec<RawTok>, Option<usize>), L
             i += 2;
             loop {
                 if i + 1 >= n {
-                    return Err(LexError(format!("line {}: unterminated comment", line_of(text, start))));
+                    return Err(LexError::at_offset(text, start, "unterminated comment"));
                 }
                 if bytes[i] == b'*' && bytes[i + 1] == b'/' {
                     i += 2;
@@ -154,7 +153,7 @@ fn lex(text: &str, stop_at_type: bool) -> Result<(Vec<RawTok>, Option<usize>), L
             i += 3;
             loop {
                 if i >= n {
-                    return Err(LexError(format!("line {}: unterminated text block", line_of(text, start))));
+                    return Err(LexError::at_offset(text, start, "unterminated text block"));
                 }
                 if bytes[i] == b'\\' {
                     i += 2;
@@ -172,7 +171,7 @@ fn lex(text: &str, stop_at_type: bool) -> Result<(Vec<RawTok>, Option<usize>), L
             i += 1;
             loop {
                 if i >= n || bytes[i] == b'\n' {
-                    return Err(LexError(format!("line {}: unterminated literal", line_of(text, start))));
+                    return Err(LexError::at_offset(text, start, "unterminated literal"));
                 }
                 if bytes[i] == b'\\' {
                     i += 2;
@@ -213,10 +212,6 @@ const OPERATORS: &[&str] = &[
 
 fn operator_len(s: &str) -> Option<usize> {
     OPERATORS.iter().find(|op| s.starts_with(**op)).map(|op| op.len())
-}
-
-fn line_of(text: &str, pos: usize) -> usize {
-    text[..pos].matches('\n').count() + 1
 }
 
 fn lex_number(b: &[u8], mut i: usize) -> usize {
@@ -511,7 +506,11 @@ impl JavaInput {
         let mut result = Vec::new();
         for &(start, end) in ranges {
             if end > self.text.len() {
-                return Err(LexError(format!("invalid range {start}:{end}, outside the file")));
+                // Same message as the original (whose FormatterException message already starts with "error: ").
+                let length = end - start;
+                return Err(LexError::new(format!(
+                    "error: invalid length {length}, offset + length ({end}) is outside the file"
+                )));
             }
             // An empty range means "format the line under the cursor".
             let end = if end == start { start + 1 } else { end };

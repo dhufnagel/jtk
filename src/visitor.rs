@@ -649,7 +649,9 @@ impl<'a> Visitor<'a> {
                     self.scan(base);
                 }
             }
-            K::Union(_) => self.b.error = Some("expected manual descent into union types".into()),
+            K::Union(_) => {
+                self.b.error = Some(crate::formatter::FormatError::new("expected manual descent into union types"))
+            }
             K::Intersection(bounds) => {
                 self.sync(t.start);
                 self.b.open(PLUS_FOUR);

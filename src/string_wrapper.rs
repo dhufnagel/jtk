@@ -77,6 +77,32 @@ fn need_wrapping(column_limit: usize, input: &str) -> bool {
         .any(|line| line.contains(TEXT_BLOCK_DELIMITER) || (line.contains('"') && jlen(line) > column_limit))
 }
 
+/// Whether the lines touching `ranges` (byte ranges) exceed the column limit or belong to a text block (port of
+/// `StringWrapper.linesNeedWrapping`, used for `--output-replacements`).
+pub fn lines_need_wrapping(column_limit: usize, input: &str, ranges: &[(usize, usize)]) -> bool {
+    let offsets = newlines::line_offsets(input);
+    let mut inside_text_block = false;
+    let mut lines_to_change = Vec::new();
+    for (i, line) in newlines::lines(input).iter().enumerate() {
+        let mut change = jlen(line) > column_limit;
+        if line.contains(TEXT_BLOCK_DELIMITER) {
+            inside_text_block = !inside_text_block;
+            change = true;
+        } else if inside_text_block {
+            change = true;
+        }
+        if change {
+            lines_to_change.push(i);
+        }
+    }
+    // Lines as byte ranges, excluding the trailing line break (`Utils.lineRangesToCharRanges`).
+    let line_end = |i: usize| offsets.get(i + 1).map_or(input.len() + 1, |&o| o) - 1;
+    lines_to_change.iter().filter(|&&i| i < offsets.len()).any(|&i| {
+        let (start, end) = (offsets[i], line_end(i));
+        ranges.iter().any(|&(lo, hi)| lo.max(start) < hi.min(end))
+    })
+}
+
 /// `TreeRangeMap.put`: a new replacement overrides any overlapping ones (in practice, identical ranges produced by
 /// several long literals in the same concatenation).
 fn put(replacements: &mut Replacements, start: usize, end: usize, value: String) {

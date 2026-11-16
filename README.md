@@ -22,18 +22,30 @@ It ports the original pipeline closely:
 
 ```sh
 cargo build --release
-./target/release/palantir-java-format Foo.java        # print formatted source
-./target/release/palantir-java-format -i Foo.java     # format in place
-./target/release/palantir-java-format < Foo.java      # stdin to stdout
+./target/release/palantir-java-format Foo.java Bar.java   # print formatted sources
+./target/release/palantir-java-format -i src/**/*.java    # format in place
+./target/release/palantir-java-format - < Foo.java        # stdin to stdout
+./target/release/palantir-java-format --dry-run --set-exit-if-changed src/**/*.java   # CI check
 ```
 
-Like the original tool, it formats, removes unused imports, sorts imports and reflows long strings. Each step after
-formatting can be switched off with `--skip-removing-unused-imports`, `--skip-sorting-imports` and
-`--skip-reflowing-long-strings`.
+The command line is compatible with the original's (`--help` lists all options): `-i`, `-`, `--assume-filename`,
+`--fix-imports-only`, `--skip-sorting-imports`, `--skip-removing-unused-imports`, `--skip-reflowing-long-strings`,
+`--dry-run`, `--set-exit-if-changed`, `--lines`, `--character-ranges`, `--offset`/`--length`,
+`--output-replacements`, `--version` and `@argfile`. Like the original, it formats, removes unused imports, sorts
+imports and reflows long strings, and processes files in parallel.
+
+Differences from the original command line:
+
+- Only the Palantir style exists. `--palantir` is accepted and implied; `--aosp` is rejected. (The original uses the
+  Google style unless `--palantir` is given.)
+- Syntax error messages come from this port's parser, not javac (same `file:line:column: error:` shape).
+- As in the original, usage errors (unknown flags, missing files, conflicting options) print the usage and exit with
+  status 0.
 
 ## Tests
 
-`tests/testdata` is the upstream formatter integration corpus; `tests/imports` holds the upstream import tests
+`tests/cli.rs` checks the command line against outputs of the original. `tests/testdata` is the upstream formatter
+integration corpus; `tests/imports` holds the upstream import tests
 (`GoogleImportStyleTest`, `RemoveUnusedImportsTest`, `RemoveUnusedImportsCaseLabelsTest`), all of which pass. `cargo test` checks that the output matches upstream
 byte for byte, and that formatting the expected output with LF, CR and CRLF separators changes nothing.
 
@@ -74,8 +86,7 @@ this port, 107 s for the original native image. On a single core, 1,456 files fr
 ## Not ported
 
 - javadoc formatting (off by default in the Palantir style)
-- the `--lines`, `--offset`/`--length` and `--character-ranges` options (the partial formatting they need is
-  ported, see `format_ranges`)
+- the Google and AOSP styles
 
 ## License
 
