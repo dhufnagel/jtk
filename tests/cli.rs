@@ -122,6 +122,13 @@ fn import_options() {
 }
 
 #[test]
+fn format_javadoc_flag() {
+    let input = "/**\n * Returns   the user.\n */\nclass A {}\n";
+    assert_eq!(pjf(&["-"], input).1, input);
+    assert_eq!(pjf(&["--format-javadoc", "-"], input).1, "/** Returns the user. */\nclass A {}\n");
+}
+
+#[test]
 fn params_file() {
     let d = Dir::new("params", &[("a.java", UNFORMATTED)]);
     std::fs::write(d.0.join("args.txt"), format!("--palantir\n{}\n", d.path("a.java"))).unwrap();

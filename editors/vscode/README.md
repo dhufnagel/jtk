@@ -29,6 +29,7 @@ to use until `editor.defaultFormatter` is set.
 | `jtk.sortImports` | `true` | Sort imports when formatting a whole document. |
 | `jtk.removeUnusedImports` | `true` | Remove unused imports when formatting a whole document. |
 | `jtk.reflowLongStrings` | `true` | Reflow string literals that exceed the column limit. |
+| `jtk.formatJavadoc` | `false` | Reflow javadoc comments. |
 | `jtk.timeout` | `10000` | Maximum time in milliseconds for formatting a document. |
 
 Formatting errors (usually a syntax error in the code being edited) are shown in the status bar and in the "jtk"

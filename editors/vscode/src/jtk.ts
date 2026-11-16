@@ -8,6 +8,7 @@ export interface FormatSettings {
   sortImports: boolean;
   removeUnusedImports: boolean;
   reflowLongStrings: boolean;
+  formatJavadoc: boolean;
   timeoutMs: number;
 }
 
@@ -60,6 +61,9 @@ function settingArgs(settings: FormatSettings): string[] {
   }
   if (!settings.reflowLongStrings) {
     args.push("--skip-reflowing-long-strings");
+  }
+  if (settings.formatJavadoc) {
+    args.push("--format-javadoc");
   }
   return args;
 }

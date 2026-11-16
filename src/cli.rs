@@ -37,6 +37,8 @@ Options:
     Do not remove unused imports. Imports will still be sorted.
   --skip-reflowing-long-strings
     Do not reflow string literals that exceed the column limit.
+  --format-javadoc
+    Reflow javadoc comments (not done by default, as in the original's Palantir style).
   --dry-run, -n
     Prints the paths of the files whose contents would change if the formatter were run normally.
   --set-exit-if-changed
@@ -83,6 +85,7 @@ pub struct Options {
     pub skip_sorting_imports: bool,
     pub skip_removing_unused_imports: bool,
     pub skip_reflowing_long_strings: bool,
+    pub format_javadoc: bool,
     pub dry_run: bool,
     pub set_exit_if_changed: bool,
     pub assume_filename: Option<String>,
@@ -99,6 +102,8 @@ impl Options {
             remove_unused_imports: !self.skip_removing_unused_imports,
             sort_imports: !self.skip_sorting_imports,
             reflow_long_strings: !self.skip_reflowing_long_strings,
+            format_javadoc: self.format_javadoc,
+            ..FormatOptions::default()
         }
     }
 }
@@ -201,6 +206,7 @@ pub fn parse(args: &[String]) -> Result<Options, UsageError> {
             "--skip-sorting-imports" => options.skip_sorting_imports = true,
             "--skip-removing-unused-imports" => options.skip_removing_unused_imports = true,
             "--skip-reflowing-long-strings" => options.skip_reflowing_long_strings = true,
+            "--format-javadoc" => options.format_javadoc = true,
             "-" => options.stdin = true,
             "-n" | "--dry-run" => options.dry_run = true,
             "--set-exit-if-changed" => options.set_exit_if_changed = true,

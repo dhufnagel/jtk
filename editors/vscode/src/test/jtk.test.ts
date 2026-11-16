@@ -15,7 +15,13 @@ import {
 } from "../jtk";
 
 const binary = process.env.JTK_BIN ?? path.join(__dirname, "..", "..", "..", "..", "target", "release", "jtk");
-const settings: FormatSettings = { sortImports: true, removeUnusedImports: true, reflowLongStrings: true, timeoutMs: 10000 };
+const settings: FormatSettings = {
+  sortImports: true,
+  removeUnusedImports: true,
+  reflowLongStrings: true,
+  formatJavadoc: false,
+  timeoutMs: 10000,
+};
 
 const UNFORMATTED = "class A {\n  int x=1;\n    int y=2;\n}\n";
 const FORMATTED = "class A {\n    int x = 1;\n    int y = 2;\n}\n";
@@ -74,6 +80,13 @@ describe("formatDocument", () => {
     assert.ok(sorted.startsWith("import a.A;\nimport b.B;\n"), sorted);
     const kept = apply(text, await formatDocument(binary, text, { ...settings, sortImports: false }));
     assert.ok(kept.startsWith("import b.B;\nimport a.A;\n"), kept);
+  });
+
+  it("formats javadoc only when enabled", async () => {
+    const text = "/**\n * Short   text.\n */\nclass A {}\n";
+    assert.deepEqual(await formatDocument(binary, text, settings), []);
+    const formatted = apply(text, await formatDocument(binary, text, { ...settings, formatJavadoc: true }));
+    assert.equal(formatted, "/** Short text. */\nclass A {}\n");
   });
 
   it("reports syntax errors with their position", async () => {

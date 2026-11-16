@@ -59,6 +59,11 @@
           "default": true,
           "description": "Reflow string literals that exceed the column limit."
         },
+        "jtk.formatJavadoc": {
+          "type": "boolean",
+          "default": false,
+          "description": "Reflow javadoc comments (off by default, as in palantir-java-format)."
+        },
         "jtk.timeout": {
           "type": "number",
           "default": 10000,

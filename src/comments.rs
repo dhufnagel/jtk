@@ -6,6 +6,7 @@ use crate::newlines;
 pub struct CommentsHelper {
     line_separator: &'static str,
     max_line_length: usize,
+    format_javadoc: bool,
 }
 
 fn is_ws(c: char) -> bool {
@@ -13,8 +14,8 @@ fn is_ws(c: char) -> bool {
 }
 
 impl CommentsHelper {
-    pub fn new(line_separator: &'static str, max_line_length: usize) -> CommentsHelper {
-        CommentsHelper { line_separator, max_line_length }
+    pub fn new(line_separator: &'static str, max_line_length: usize, format_javadoc: bool) -> CommentsHelper {
+        CommentsHelper { line_separator, max_line_length, format_javadoc }
     }
 
     pub fn rewrite(&self, tok: &Tok, _max_width: i32, column0: i32) -> String {
@@ -22,8 +23,15 @@ impl CommentsHelper {
             return tok.text.clone();
         }
         let column0 = column0.max(0) as usize;
+        let formatted;
+        let text = if self.format_javadoc && tok.is_javadoc_comment() {
+            formatted = crate::javadoc::format_javadoc(&tok.text, column0, self.max_line_length as i32);
+            &formatted
+        } else {
+            &tok.text
+        };
         let lines: Vec<String> =
-            newlines::lines(&tok.text).into_iter().map(|l| l.trim_end_matches(is_ws).to_string()).collect();
+            newlines::lines(text).into_iter().map(|l| l.trim_end_matches(is_ws).to_string()).collect();
         if tok.is_slash_slash_comment() {
             self.indent_line_comments(lines, column0)
         } else if javadoc_shaped(&lines) {

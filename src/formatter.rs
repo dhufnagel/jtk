@@ -9,7 +9,19 @@ use crate::output::{JavaOutput, Replacement};
 use crate::visitor::Visitor;
 use crate::{imports, modifiers, parse, string_wrapper};
 
-pub const MAX_LINE_LENGTH: i32 = 120;
+/// Line length and indentation. Only the Palantir style is offered on the command line; the Google style's numbers
+/// are used to run upstream tests that were written for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Style {
+    /// 2 for 4-space blocks and 8-space continuations, 1 for 2 and 4.
+    pub indent_multiplier: i32,
+    pub max_line_length: i32,
+}
+
+impl Style {
+    pub const PALANTIR: Style = Style { indent_multiplier: 2, max_line_length: 120 };
+    pub const GOOGLE: Style = Style { indent_multiplier: 1, max_line_length: 100 };
+}
 
 /// A formatting error, optionally with a 1-based line and column (in UTF-16 units, like javac).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,11 +66,20 @@ pub struct FormatOptions {
     pub remove_unused_imports: bool,
     pub sort_imports: bool,
     pub reflow_long_strings: bool,
+    /// Re-flow javadoc comments (off by default, as in the original's Palantir style).
+    pub format_javadoc: bool,
+    pub style: Style,
 }
 
 impl Default for FormatOptions {
     fn default() -> Self {
-        FormatOptions { remove_unused_imports: true, sort_imports: true, reflow_long_strings: true }
+        FormatOptions {
+            remove_unused_imports: true,
+            sort_imports: true,
+            reflow_long_strings: true,
+            format_javadoc: false,
+            style: Style::PALANTIR,
+        }
     }
 }
 
@@ -96,15 +117,16 @@ pub fn format_replacements_with_reflow(
     options: &FormatOptions,
 ) -> Result<Vec<Replacement>, FormatError> {
     with_large_stack(|| {
-        let replacements = format_replacements(text, ranges)?;
+        let replacements = format_replacements_with(text, ranges, options)?;
         if !options.reflow_long_strings {
             return Ok(replacements);
         }
         let formatted = apply_replacements(text, &replacements);
-        if !string_wrapper::lines_need_wrapping(MAX_LINE_LENGTH as usize, &formatted, ranges) {
+        let max = options.style.max_line_length as usize;
+        if !string_wrapper::lines_need_wrapping(max, &formatted, ranges) {
             return Ok(replacements);
         }
-        let wrapped = string_wrapper::wrap(MAX_LINE_LENGTH as usize, &formatted, format_ranges)?;
+        let wrapped = string_wrapper::wrap(max, &formatted, |t, r| format_ranges_with(t, r, options))?;
         if wrapped == formatted {
             return Ok(replacements);
         }
@@ -141,7 +163,7 @@ fn format_on_current_thread(
     ranges: &[(usize, usize)],
     options: &FormatOptions,
 ) -> Result<String, FormatError> {
-    let mut formatted = format_ranges(text, ranges)?;
+    let mut formatted = format_ranges_with(text, ranges, options)?;
     if options.remove_unused_imports {
         // Formatting does not change which names are used, so the input's (cached) syntax tree is analyzed.
         if let Some(used) = imports::used_import_names(text) {
@@ -152,14 +174,15 @@ fn format_on_current_thread(
         formatted = imports::reorder_imports(&formatted).map_err(FormatError::new)?;
     }
     if options.reflow_long_strings {
-        formatted = string_wrapper::wrap(MAX_LINE_LENGTH as usize, &formatted, format_ranges)?;
+        let max = options.style.max_line_length as usize;
+        formatted = string_wrapper::wrap(max, &formatted, |t, r| format_ranges_with(t, r, options))?;
     }
     Ok(formatted)
 }
 
 /// Formats a Java compilation unit and reflows long string literals, leaving imports alone.
 pub fn format_source(text: &str) -> Result<String, FormatError> {
-    format(text, &FormatOptions { remove_unused_imports: false, sort_imports: false, reflow_long_strings: true })
+    format(text, &FormatOptions { remove_unused_imports: false, sort_imports: false, ..FormatOptions::default() })
 }
 
 /// Formats a Java compilation unit, without reflowing long string literals.
@@ -170,11 +193,29 @@ pub fn format_without_reflow(text: &str) -> Result<String, FormatError> {
 /// Formats only the given byte ranges of the input (extended to whole statements or declarations), like
 /// `Formatter.formatSource(input, characterRanges)`.
 pub fn format_ranges(text: &str, character_ranges: &[(usize, usize)]) -> Result<String, FormatError> {
-    Ok(apply_replacements(text, &format_replacements(text, character_ranges)?))
+    format_ranges_with(text, character_ranges, &FormatOptions::default())
+}
+
+/// [`format_ranges`] with the style and javadoc setting from `options` (import and string options are not used).
+pub fn format_ranges_with(
+    text: &str,
+    character_ranges: &[(usize, usize)],
+    options: &FormatOptions,
+) -> Result<String, FormatError> {
+    Ok(apply_replacements(text, &format_replacements_with(text, character_ranges, options)?))
 }
 
 /// The replacements that format the given byte ranges of the input.
 pub fn format_replacements(text: &str, character_ranges: &[(usize, usize)]) -> Result<Vec<Replacement>, FormatError> {
+    format_replacements_with(text, character_ranges, &FormatOptions::default())
+}
+
+/// [`format_replacements`] with the style and javadoc setting from `options`.
+pub fn format_replacements_with(
+    text: &str,
+    character_ranges: &[(usize, usize)],
+    options: &FormatOptions,
+) -> Result<Vec<Replacement>, FormatError> {
     let mut input = JavaInput::new(text)?;
     let token_ranges = input.character_ranges_to_token_ranges(character_ranges)?;
     let reordered = modifiers::reorder_modifiers(&input, &token_ranges);
@@ -185,15 +226,16 @@ pub fn format_replacements(text: &str, character_ranges: &[(usize, usize)]) -> R
     let tree = parse::parse(text).ok_or_else(|| FormatError::new("parse failed"))?;
     let unit = Converter { src: text }.compilation_unit(&tree.root_node())?;
 
-    let mut visitor = Visitor::new(OpsBuilder::new(&input), text);
+    let style = options.style;
+    let mut visitor = Visitor::new(OpsBuilder::new(&input), text, style.indent_multiplier);
     visitor.scan(&unit);
     let mut builder = visitor.b;
     builder.sync(text.len());
     builder.drain();
     let ops = builder.build()?;
     let (docs, root) = Docs::build(&input, ops.ops);
-    let comments = CommentsHelper::new(input.line_separator, MAX_LINE_LENGTH as usize);
-    let layout = Layout { docs: &docs, comments: &comments, max_width: MAX_LINE_LENGTH };
+    let comments = CommentsHelper::new(input.line_separator, style.max_line_length as usize, options.format_javadoc);
+    let layout = Layout { docs: &docs, comments: &comments, max_width: style.max_line_length };
     let state = layout.compute_breaks(root, &State::starting());
     let mut output = JavaOutput::new(&input, &ops.blank_lines, &ops.partial_format_ranges);
     docs.write(root, &state, &mut output);

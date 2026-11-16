@@ -18,6 +18,7 @@ It ports the original pipeline closely:
 | `modifiers.rs` | `ModifierOrderer` |
 | `string_wrapper.rs` | `StringWrapper` (long string reflow, text block indentation) |
 | `imports.rs` | `ImportOrderer` (Palantir/Google order), `RemoveUnusedImports` |
+| `javadoc.rs` | `javadoc/*` (`JavadocFormatter`, `JavadocLexer`, `JavadocWriter`) |
 
 ## Usage
 
@@ -31,6 +32,7 @@ cargo build --release
 
 The command line is compatible with the original's (`--help` lists all options): `-i`, `-`, `--assume-filename`,
 `--fix-imports-only`, `--skip-sorting-imports`, `--skip-removing-unused-imports`, `--skip-reflowing-long-strings`,
+`--format-javadoc`,
 `--dry-run`, `--set-exit-if-changed`, `--lines`, `--character-ranges`, `--offset`/`--length`,
 `--output-replacements`, `--version` and `@argfile`. Like the original, it formats, removes unused imports, sorts
 imports and reflows long strings, and processes files in parallel.
@@ -42,6 +44,8 @@ Differences from the original command line:
 - Only the Palantir style exists. `--palantir` is accepted and implied; `--aosp` is rejected. (The original uses the
   Google style unless `--palantir` is given.)
 - Syntax error messages come from this port's parser, not javac (same `file:line:column: error:` shape).
+- `--format-javadoc` is an addition: the original offers javadoc formatting only through its Java API (and plugins
+  built on it), not on the command line.
 - As in the original, usage errors (unknown flags, missing files, conflicting options) print the usage and exit with
   status 0.
 
@@ -87,13 +91,17 @@ Against palantir-java-format 2.103.0 (native image from Maven Central), with the
 
 Both report the same 18 "Imports not contiguous" errors on the JDK sources.
 
+Javadoc formatting (`--format-javadoc`, which the original only offers through its Java API as
+`formatJavadoc(true)`) produces identical output on all 15,227 JDK files, compared with the original library's
+`Formatter.formatSource`. It changes 1,302 of the 1,456 files in `java.base` and other modules that the smaller
+comparisons use. The upstream `JavadocFormattingTest` cases are in `tests/javadoc`.
+
 Performance on the same JDK sources (one command per tool, which formats files in parallel on all cores): 11 s for
 this port, 107 s for the original native image. On a single core, 1,456 files from `java.base` and others take 6.9 s
 (`scripts/bench.sh`).
 
 ## Not ported
 
-- javadoc formatting (off by default in the Palantir style)
 - the Google and AOSP styles
 
 ## License

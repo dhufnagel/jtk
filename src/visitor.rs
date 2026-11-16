@@ -14,12 +14,8 @@ use crate::ops::{BlankLineWanted, OpsBuilder};
 const METHOD_CHAIN_COLUMN_LIMIT: i32 = 80;
 const ANNOTATION_RECORD_PARAMETER_COLUMN_LIMIT: i32 = 60;
 const MAX_ITEM_LENGTH_FOR_FILLING: usize = 10;
-const INDENT_MULTIPLIER: i32 = 2;
 
 const ZERO: Indent = Indent::Const(0);
-const PLUS_TWO: Indent = Indent::Const(2 * INDENT_MULTIPLIER);
-const PLUS_FOUR: Indent = Indent::Const(4 * INDENT_MULTIPLIER);
-const MINUS_FOUR: Indent = Indent::Const(-4 * INDENT_MULTIPLIER);
 
 const LOG_METHODS: &[&str] = &[
     "at",
@@ -234,11 +230,25 @@ pub struct Visitor<'a> {
     path: Vec<bool>,
     /// For each scanned tree on the current path: whether we are inside an expression.
     in_expression: Vec<bool>,
+    indent_multiplier: i32,
+    plus_two: Indent,
+    plus_four: Indent,
+    minus_four: Indent,
 }
 
 impl<'a> Visitor<'a> {
-    pub fn new(b: OpsBuilder<'a>, src: &'a str) -> Visitor<'a> {
-        Visitor { b, src, path: Vec::new(), in_expression: vec![false] }
+    /// `indent_multiplier` scales all indents: 2 for the Palantir style (4-space blocks), 1 for the Google style.
+    pub fn new(b: OpsBuilder<'a>, src: &'a str, indent_multiplier: i32) -> Visitor<'a> {
+        Visitor {
+            b,
+            src,
+            path: Vec::new(),
+            in_expression: vec![false],
+            indent_multiplier,
+            plus_two: Indent::Const(2 * indent_multiplier),
+            plus_four: Indent::Const(4 * indent_multiplier),
+            minus_four: Indent::Const(-4 * indent_multiplier),
+        }
     }
 
     fn token(&mut self, t: &str) {
@@ -407,7 +417,7 @@ impl<'a> Visitor<'a> {
             }
             K::Break(label) => {
                 self.sync(t.start);
-                self.b.open(PLUS_FOUR);
+                self.b.open(self.plus_four.clone());
                 self.token("break");
                 if let Some(l) = label {
                     self.b.break_flat(" ");
@@ -418,7 +428,7 @@ impl<'a> Visitor<'a> {
             }
             K::Continue(label) => {
                 self.sync(t.start);
-                self.b.open(PLUS_FOUR);
+                self.b.open(self.plus_four.clone());
                 self.token("continue");
                 if let Some(l) = label {
                     self.b.break_flat(" ");
@@ -432,7 +442,7 @@ impl<'a> Visitor<'a> {
                 self.token("synchronized");
                 self.b.space();
                 self.token("(");
-                self.b.open(PLUS_FOUR);
+                self.b.open(self.plus_four.clone());
                 self.b.break_op();
                 self.scan(skip_paren(lock));
                 self.b.close();
@@ -445,7 +455,7 @@ impl<'a> Visitor<'a> {
                 self.b.open(ZERO);
                 self.token("assert");
                 self.b.space();
-                self.b.open(if detail.is_none() { ZERO } else { PLUS_FOUR });
+                self.b.open(if detail.is_none() { ZERO } else { self.plus_four.clone() });
                 self.scan(cond);
                 if let Some(d) = detail {
                     self.b.break_flat(" ");
@@ -504,7 +514,7 @@ impl<'a> Visitor<'a> {
             }
             K::Assign { op, lhs, rhs } => {
                 self.sync(t.start);
-                self.b.open_op(OpenOp::new(PLUS_FOUR).behaviour(break_only_if_inner(false)));
+                self.b.open_op(OpenOp::new(self.plus_four.clone()).behaviour(break_only_if_inner(false)));
                 self.scan(lhs);
                 self.b.space();
                 self.split_token(op);
@@ -514,7 +524,7 @@ impl<'a> Visitor<'a> {
             }
             K::Conditional { cond, then, else_ } => {
                 self.sync(t.start);
-                self.b.open(PLUS_FOUR);
+                self.b.open(self.plus_four.clone());
                 self.scan(cond);
                 self.b.break_flat(" ");
                 self.token("?");
@@ -528,7 +538,7 @@ impl<'a> Visitor<'a> {
             }
             K::InstanceOf { expr, target } => {
                 self.sync(t.start);
-                self.b.open(PLUS_FOUR);
+                self.b.open(self.plus_four.clone());
                 self.scan(expr);
                 self.b.break_flat(" ");
                 self.b.open(ZERO);
@@ -541,7 +551,7 @@ impl<'a> Visitor<'a> {
             K::Cast { ty, expr } => {
                 self.sync(t.start);
                 self.b.open_op(
-                    OpenOp::new(PLUS_FOUR)
+                    OpenOp::new(self.plus_four.clone())
                         .behaviour(prefer_breaking_last(true))
                         .breakability(LastLevelBreakability::AcceptInlineChain),
                 );
@@ -570,7 +580,7 @@ impl<'a> Visitor<'a> {
             K::MemberRef { qual, type_args, name } => {
                 self.sync(t.start);
                 self.b.open_op(
-                    OpenOp::new(PLUS_FOUR)
+                    OpenOp::new(self.plus_four.clone())
                         .name("methodReference")
                         .breakability(LastLevelBreakability::CheckInner)
                         .behaviour(BreakBehaviour::InlineSuffix),
@@ -579,7 +589,7 @@ impl<'a> Visitor<'a> {
                 self.b.open(ZERO);
                 self.b.break_op();
                 self.b.op("::");
-                self.add_type_arguments(type_args, PLUS_FOUR);
+                self.add_type_arguments(type_args, self.plus_four.clone());
                 match name {
                     Some(n) => self.token(n),
                     None => self.token("new"),
@@ -602,7 +612,7 @@ impl<'a> Visitor<'a> {
                     self.token("<");
                     self.token(">");
                 } else {
-                    self.b.open(PLUS_FOUR);
+                    self.b.open(self.plus_four.clone());
                     self.scan(base);
                     self.token("<");
                     self.b.break_op();
@@ -626,7 +636,7 @@ impl<'a> Visitor<'a> {
                 self.b.open(ZERO);
                 self.token("?");
                 if let Some((extends, bound)) = bound {
-                    self.b.open(PLUS_FOUR);
+                    self.b.open(self.plus_four.clone());
                     self.b.space();
                     self.token(if *extends { "extends" } else { "super" });
                     self.b.break_flat(" ");
@@ -654,7 +664,7 @@ impl<'a> Visitor<'a> {
             }
             K::Intersection(bounds) => {
                 self.sync(t.start);
-                self.b.open(PLUS_FOUR);
+                self.b.open(self.plus_four.clone());
                 let mut first = true;
                 for ty in bounds {
                     if !first {
@@ -676,9 +686,9 @@ impl<'a> Visitor<'a> {
                 if !bounds.is_empty() {
                     self.b.space();
                     self.token("extends");
-                    self.b.open(PLUS_FOUR);
+                    self.b.open(self.plus_four.clone());
                     self.b.break_flat(" ");
-                    self.b.open(PLUS_FOUR);
+                    self.b.open(self.plus_four.clone());
                     let mut first = true;
                     for bound in bounds {
                         if !first {
@@ -696,7 +706,7 @@ impl<'a> Visitor<'a> {
             }
             K::BindingPattern { var } => {
                 self.sync(t.start);
-                self.b.open(PLUS_FOUR);
+                self.b.open(self.plus_four.clone());
                 let ops = self.visit_modifiers(&var.mods.annotations, Direction::Horizontal, None, false);
                 self.b.add_all(ops);
                 match &var.ty {
@@ -709,7 +719,7 @@ impl<'a> Visitor<'a> {
             }
             K::RecordPattern { ty, nested } => {
                 self.scan(ty);
-                self.b.open(PLUS_FOUR);
+                self.b.open(self.plus_four.clone());
                 self.token("(");
                 self.b.break_op();
                 let mut first = true;
@@ -733,7 +743,7 @@ impl<'a> Visitor<'a> {
                 self.b.space();
                 self.scan(name);
                 if let Some(items) = items {
-                    self.b.open(PLUS_FOUR);
+                    self.b.open(self.plus_four.clone());
                     self.b.space();
                     self.token(separator);
                     self.b.forced_break();
@@ -805,7 +815,7 @@ impl<'a> Visitor<'a> {
                 }
                 self.b.forced_break();
             }
-            self.b.open(PLUS_FOUR);
+            self.b.open(self.plus_four.clone());
             self.token("package");
             self.b.space();
             self.visit_name(name);
@@ -886,11 +896,11 @@ impl<'a> Visitor<'a> {
         self.scan(name);
         self.b.space();
         if directives.is_empty() {
-            self.token_break_trailing_comment("{", PLUS_TWO);
+            self.token_break_trailing_comment("{", self.plus_two.clone());
             self.b.blank_line_wanted(BlankLineWanted::No);
-            self.token_indent("}", PLUS_TWO);
+            self.token_indent("}", self.plus_two.clone());
         } else {
-            self.b.open(PLUS_TWO);
+            self.b.open(self.plus_two.clone());
             self.token("{");
             self.b.forced_break();
             let mut previous: Option<String> = None;
@@ -939,9 +949,10 @@ impl<'a> Visitor<'a> {
         if !c.type_params.is_empty() {
             self.token("<");
         }
-        self.b.open(PLUS_FOUR);
+        self.b.open(self.plus_four.clone());
         if !c.type_params.is_empty() {
-            let indent = if has_superclass || has_super_interfaces || has_permits { PLUS_FOUR } else { ZERO };
+            let indent =
+                if has_superclass || has_super_interfaces || has_permits { self.plus_four.clone() } else { ZERO };
             self.type_parameters_rest(&c.type_params, indent);
         }
         if let Some(ext) = &c.extends {
@@ -970,9 +981,9 @@ impl<'a> Visitor<'a> {
         if !c.type_params.is_empty() {
             self.token("<");
         }
-        self.b.open(PLUS_FOUR);
+        self.b.open(self.plus_four.clone());
         if !c.type_params.is_empty() {
-            self.type_parameters_rest(&c.type_params, if has_super_interfaces { PLUS_FOUR } else { ZERO });
+            self.type_parameters_rest(&c.type_params, if has_super_interfaces { self.plus_four.clone() } else { ZERO });
         }
         self.token("(");
         if !c.record_components.is_empty() {
@@ -983,7 +994,7 @@ impl<'a> Visitor<'a> {
         self.token(")");
         if has_super_interfaces {
             self.b.break_to_fill(" ");
-            self.b.open(if c.implements.len() > 1 { PLUS_FOUR } else { ZERO });
+            self.b.open(if c.implements.len() > 1 { self.plus_four.clone() } else { ZERO });
             self.token("implements");
             self.b.space();
             let mut first = true;
@@ -1005,16 +1016,16 @@ impl<'a> Visitor<'a> {
     fn visit_enum_declaration(&mut self, c: &ClassDecl) {
         self.b.open(ZERO);
         self.visit_and_break_modifiers(&c.mods, false, Direction::Vertical, None);
-        self.b.open(PLUS_FOUR);
+        self.b.open(self.plus_four.clone());
         self.token("enum");
         self.b.break_flat(" ");
         self.token(&c.name);
         self.b.close();
         self.b.close();
         if !c.implements.is_empty() {
-            self.b.open(PLUS_FOUR);
+            self.b.open(self.plus_four.clone());
             self.b.break_flat(" ");
-            self.b.open(PLUS_FOUR);
+            self.b.open(self.plus_four.clone());
             self.token("implements");
             self.b.break_flat(" ");
             self.b.open(ZERO);
@@ -1032,10 +1043,10 @@ impl<'a> Visitor<'a> {
             self.b.close();
         }
         self.b.space();
-        self.token_break_trailing_comment("{", PLUS_TWO);
+        self.token_break_trailing_comment("{", self.plus_two.clone());
         if c.enum_constants.is_empty() && c.members.is_empty() {
             if self.b.peek_is(";") {
-                self.b.open(PLUS_TWO);
+                self.b.open(self.plus_two.clone());
                 self.b.forced_break();
                 self.token(";");
                 self.b.forced_break();
@@ -1044,7 +1055,7 @@ impl<'a> Visitor<'a> {
                 self.b.open(ZERO);
                 self.b.forced_break();
                 self.b.blank_line_wanted(BlankLineWanted::No);
-                self.token_indent("}", PLUS_TWO);
+                self.token_indent("}", self.plus_two.clone());
                 self.b.close();
             } else {
                 self.b.open(ZERO);
@@ -1053,7 +1064,7 @@ impl<'a> Visitor<'a> {
                 self.b.close();
             }
         } else {
-            self.b.open(PLUS_TWO);
+            self.b.open(self.plus_two.clone());
             self.b.blank_line_wanted(BlankLineWanted::No);
             self.b.forced_break();
             self.b.open(ZERO);
@@ -1075,7 +1086,7 @@ impl<'a> Visitor<'a> {
             self.b.close();
             self.b.close();
             if self.b.peek_is(";") {
-                self.b.open(PLUS_TWO);
+                self.b.open(self.plus_two.clone());
                 self.token(";");
                 self.b.forced_break();
                 self.drop_empty_declarations();
@@ -1085,7 +1096,7 @@ impl<'a> Visitor<'a> {
             self.add_body_declarations(&c.members, false, false);
             self.b.forced_break();
             self.b.blank_line_wanted(BlankLineWanted::No);
-            self.token_indent("}", PLUS_TWO);
+            self.token_indent("}", self.plus_two.clone());
             self.b.close();
         }
         self.b.guess_token(";");
@@ -1101,7 +1112,7 @@ impl<'a> Visitor<'a> {
             self.b.guess_token("(");
             self.b.guess_token(")");
         } else {
-            self.add_arguments(&ec.args, PLUS_FOUR);
+            self.add_arguments(&ec.args, self.plus_four.clone());
         }
         if let Some(body) = &ec.body {
             self.add_body_declarations(body, true, true);
@@ -1113,7 +1124,7 @@ impl<'a> Visitor<'a> {
             return;
         }
         self.b.break_to_fill(" ");
-        self.b.open(if types.len() > 1 { PLUS_FOUR } else { ZERO });
+        self.b.open(if types.len() > 1 { self.plus_four.clone() } else { ZERO });
         self.token(keyword);
         self.b.space();
         let mut first = true;
@@ -1162,20 +1173,20 @@ impl<'a> Visitor<'a> {
         if decls.is_empty() {
             if braces {
                 self.b.space();
-                self.token_break_trailing_comment("{", PLUS_TWO);
+                self.token_break_trailing_comment("{", self.plus_two.clone());
                 self.b.blank_line_wanted(BlankLineWanted::No);
                 self.b.open(ZERO);
-                self.token_indent("}", PLUS_TWO);
+                self.token_indent("}", self.plus_two.clone());
                 self.b.close();
             }
             return;
         }
         if braces {
             self.b.space();
-            self.token_break_trailing_comment("{", PLUS_TWO);
+            self.token_break_trailing_comment("{", self.plus_two.clone());
             self.b.open_op(OpenOp::new(ZERO).breakability(LastLevelBreakability::AcceptInlineChain));
         }
-        self.b.open(PLUS_TWO);
+        self.b.open(self.plus_two.clone());
         let mut first = first0;
         let mut last_one_got_blank_line_before = false;
         for decl in decls {
@@ -1206,7 +1217,7 @@ impl<'a> Visitor<'a> {
         self.mark_for_partial_format();
         if braces {
             self.b.blank_line_wanted(BlankLineWanted::No);
-            self.token_indent("}", PLUS_TWO);
+            self.token_indent("}", self.plus_two.clone());
             self.b.close();
         }
     }
@@ -1226,7 +1237,7 @@ impl<'a> Visitor<'a> {
             }
             None => (None, None),
         };
-        self.b.open(PLUS_FOUR);
+        self.b.open(self.plus_four.clone());
         let break_before_name = self.b.new_tag();
         let break_before_type = self.b.new_tag();
         self.b.open(ZERO);
@@ -1234,7 +1245,7 @@ impl<'a> Visitor<'a> {
             let mut first = true;
             if !m.type_params.is_empty() {
                 self.token("<");
-                self.type_parameters_rest(&m.type_params, PLUS_FOUR);
+                self.type_parameters_rest(&m.type_params, self.plus_four.clone());
                 if !m.return_type_annotations.is_empty() {
                     self.b.break_to_fill(" ");
                     self.visit_annotations(&m.return_type_annotations, false, false);
@@ -1249,7 +1260,7 @@ impl<'a> Visitor<'a> {
                     first = false;
                 }
                 if !opened_name_and_type_scope {
-                    self.b.open(Indent::if_(break_before_type, PLUS_FOUR, ZERO));
+                    self.b.open(Indent::if_(break_before_type, self.plus_four.clone(), ZERO));
                     opened_name_and_type_scope = true;
                 }
                 self.scan(base);
@@ -1270,8 +1281,8 @@ impl<'a> Visitor<'a> {
             self.b.close();
         }
         self.b.close();
-        self.b.open(Indent::if_(break_before_name, PLUS_FOUR, ZERO));
-        self.b.open(Indent::if_(break_before_type, PLUS_FOUR, ZERO));
+        self.b.open(Indent::if_(break_before_name, self.plus_four.clone(), ZERO));
+        self.b.open(Indent::if_(break_before_type, self.plus_four.clone(), ZERO));
         self.b.open(ZERO);
         {
             if !is_record_constructor {
@@ -1287,7 +1298,7 @@ impl<'a> Visitor<'a> {
             }
             if !m.throws.is_empty() {
                 self.b.break_to_fill(" ");
-                self.b.open(PLUS_FOUR);
+                self.b.open(self.plus_four.clone());
                 self.token("throws");
                 self.b.break_to_fill(" ");
                 let mut first = true;
@@ -1305,7 +1316,7 @@ impl<'a> Visitor<'a> {
                 self.b.space();
                 self.token("default");
                 if matches!(dv.kind, K::NewArray { .. }) {
-                    self.b.open(MINUS_FOUR);
+                    self.b.open(self.minus_four.clone());
                     self.b.space();
                     self.scan(dv);
                     self.b.close();
@@ -1324,7 +1335,7 @@ impl<'a> Visitor<'a> {
             None => self.token(";"),
             Some(_) => {
                 self.b.space();
-                self.b.token("{", RealOrImaginary::Real, PLUS_TWO, Some(PLUS_TWO));
+                self.b.token("{", RealOrImaginary::Real, self.plus_two.clone(), Some(self.plus_two.clone()));
             }
         }
         self.b.close();
@@ -1334,7 +1345,7 @@ impl<'a> Visitor<'a> {
             if stmts.is_empty() {
                 self.b.blank_line_wanted(BlankLineWanted::No);
             } else {
-                self.b.open(PLUS_TWO);
+                self.b.open(self.plus_two.clone());
                 self.b.forced_break();
                 self.b.blank_line_wanted(BlankLineWanted::Preserve);
                 self.visit_statements(stmts, false);
@@ -1343,7 +1354,7 @@ impl<'a> Visitor<'a> {
                 self.b.blank_line_wanted(BlankLineWanted::No);
                 self.mark_for_partial_format();
             }
-            self.token_indent("}", PLUS_TWO);
+            self.token_indent("}", self.plus_two.clone());
         }
     }
 
@@ -1528,7 +1539,7 @@ impl<'a> Visitor<'a> {
             let value = &args[0];
             let is_array_initializer = matches!(value.kind, K::NewArray { .. });
             self.b.open_op(
-                OpenOp::new(if is_array_initializer { ZERO } else { PLUS_FOUR })
+                OpenOp::new(if is_array_initializer { ZERO } else { self.plus_four.clone() })
                     .behaviour(prefer_breaking_last(true))
                     .breakability(LastLevelBreakability::CheckInner),
             );
@@ -1547,7 +1558,7 @@ impl<'a> Visitor<'a> {
         self.token("@");
         self.scan(ty);
         if !args.is_empty() {
-            self.b.open(PLUS_FOUR);
+            self.b.open(self.plus_four.clone());
             self.token("(");
             self.b.break_op();
             let has_array_initializer = args.iter().any(is_array_value);
@@ -1583,7 +1594,7 @@ impl<'a> Visitor<'a> {
         let is_array_initializer = matches!(rhs.kind, K::NewArray { .. });
         self.sync(t.start);
         self.b.open_op(
-            OpenOp::new(if is_array_initializer { ZERO } else { PLUS_FOUR })
+            OpenOp::new(if is_array_initializer { ZERO } else { self.plus_four.clone() })
                 .behaviour(prefer_breaking_last(true))
                 .breakability(LastLevelBreakability::AcceptInlineChainIfSimpleOtherwiseCheckInner),
         );
@@ -1685,7 +1696,7 @@ impl<'a> Visitor<'a> {
         match modifiers {
             Some((mods, is_record)) if kind == DeclKind::Parameter && !mods.annotations.is_empty() => {
                 if !is_record {
-                    self.b.open(PLUS_FOUR);
+                    self.b.open(self.plus_four.clone());
                 } else {
                     self.b.open_op(
                         OpenOp::new(ZERO).name("visitParam").column_limit(ANNOTATION_RECORD_PARAMETER_COLUMN_LIMIT),
@@ -1700,7 +1711,7 @@ impl<'a> Visitor<'a> {
             }
             let is_var = self.b.peek_is("var") && (name != "var" || self.b.peek_token_skip(1) == Some("var"));
             let has_type = ty.is_some() || is_var;
-            self.b.open(if has_type { PLUS_FOUR } else { ZERO });
+            self.b.open(if has_type { self.plus_four.clone() } else { ZERO });
             {
                 self.b.open(ZERO);
                 {
@@ -1708,7 +1719,7 @@ impl<'a> Visitor<'a> {
                     if let Some((Some(node), _)) = &type_with_dims {
                         self.scan(node);
                         let total_dims = dims.len();
-                        self.b.open(PLUS_FOUR);
+                        self.b.open(self.plus_four.clone());
                         self.maybe_add_dims(&mut VecDeque::new(), &mut dims);
                         self.b.close();
                         base_dims = total_dims - dims.len();
@@ -1721,7 +1732,7 @@ impl<'a> Visitor<'a> {
                     if has_type {
                         self.b.break_full(FillMode::Independent, " ", ZERO, Some(type_break));
                     }
-                    self.b.open(Indent::if_(type_break, PLUS_FOUR, ZERO));
+                    self.b.open(Indent::if_(type_break, self.plus_four.clone(), ZERO));
                     if name_is_receiver_expression {
                         let mut first = true;
                         for part in name.split('.') {
@@ -1744,13 +1755,13 @@ impl<'a> Visitor<'a> {
                 self.b.space();
                 self.token(equals);
                 if matches!(init.kind, K::NewArray { elem: None, .. }) {
-                    self.b.open(MINUS_FOUR);
+                    self.b.open(self.minus_four.clone());
                     self.b.space();
                     self.visit(init);
                     self.b.close();
                 } else {
                     self.b.open_op(
-                        OpenOp::new(Indent::if_(type_break, PLUS_FOUR, ZERO))
+                        OpenOp::new(Indent::if_(type_break, self.plus_four.clone(), ZERO))
                             .behaviour(break_only_if_inner(true))
                             .breakability(LastLevelBreakability::Abort),
                     );
@@ -1777,7 +1788,7 @@ impl<'a> Visitor<'a> {
         self.b.open(ZERO);
         let first_fragment = fragments[0];
         self.visit_and_break_modifiers(&first_fragment.mods, false, direction, None);
-        self.b.open(PLUS_FOUR);
+        self.b.open(self.plus_four.clone());
         self.b.open(ZERO);
         let ty = first_fragment.ty.as_deref().expect("declare_many requires a type");
         let (base, extracted) = extract_dims(ty);
@@ -1814,7 +1825,7 @@ impl<'a> Visitor<'a> {
             if let Some(init) = &fragment.init {
                 self.b.space();
                 self.token("=");
-                self.b.open(PLUS_FOUR);
+                self.b.open(self.plus_four.clone());
                 self.b.break_flat(" ");
                 self.scan(init);
                 self.b.close();
@@ -1880,7 +1891,7 @@ impl<'a> Visitor<'a> {
 
     fn visit_annotated_array_type(&mut self, t: &Tree) {
         let (base, dims) = extract_dims(t);
-        self.b.open(PLUS_FOUR);
+        self.b.open(self.plus_four.clone());
         self.scan(base);
         let mut dims: VecDeque<&Vec<Tree>> = dims.into_iter().collect();
         self.maybe_add_dims(&mut VecDeque::new(), &mut dims);
@@ -1902,14 +1913,14 @@ impl<'a> Visitor<'a> {
             if self.b.peek_is(";") {
                 self.token(";");
             } else {
-                self.token_break_trailing_comment("{", PLUS_TWO);
+                self.token_break_trailing_comment("{", self.plus_two.clone());
                 self.b.blank_line_wanted(BlankLineWanted::No);
-                self.token_indent("}", PLUS_TWO);
+                self.token_indent("}", self.plus_two.clone());
             }
         } else {
             self.b.open(ZERO);
-            self.b.open(PLUS_TWO);
-            self.token_break_trailing_comment("{", PLUS_TWO);
+            self.b.open(self.plus_two.clone());
+            self.token_break_trailing_comment("{", self.plus_two.clone());
             self.b.blank_line_wanted(if allow_leading_blank { BlankLineWanted::Preserve } else { BlankLineWanted::No });
             self.visit_statements(stmts, false);
             self.b.close();
@@ -1921,7 +1932,7 @@ impl<'a> Visitor<'a> {
                 BlankLineWanted::No
             });
             self.mark_for_partial_format();
-            self.token_indent("}", PLUS_TWO);
+            self.token_indent("}", self.plus_two.clone());
         }
     }
 
@@ -1931,7 +1942,7 @@ impl<'a> Visitor<'a> {
             self.b.space();
             self.visit_block(t, collapse_empty, allow_leading_blank, allow_trailing);
         } else {
-            self.b.open(PLUS_TWO);
+            self.b.open(self.plus_two.clone());
             self.b.break_flat(" ");
             self.scan(t);
             self.b.close();
@@ -2020,9 +2031,9 @@ impl<'a> Visitor<'a> {
         self.token("for");
         self.b.space();
         self.token("(");
-        self.b.open(PLUS_FOUR);
+        self.b.open(self.plus_four.clone());
         let expr_inits = init.iter().filter(|i| matches!(i.kind, K::ExprStmt(_))).count();
-        self.b.open(if expr_inits > 1 { PLUS_FOUR } else { ZERO });
+        self.b.open(if expr_inits > 1 { self.plus_four.clone() } else { ZERO });
         if !init.is_empty() {
             if let K::Vars(vars) = &init[0].kind {
                 let refs: Vec<&VarDecl> = vars.iter().collect();
@@ -2054,7 +2065,7 @@ impl<'a> Visitor<'a> {
         self.token(";");
         if !update.is_empty() {
             self.b.break_flat(" ");
-            self.b.open(if update.len() <= 1 { ZERO } else { PLUS_FOUR });
+            self.b.open(if update.len() <= 1 { ZERO } else { self.plus_four.clone() });
             let mut first = true;
             for u in update {
                 if !first {
@@ -2082,9 +2093,9 @@ impl<'a> Visitor<'a> {
         self.scan(skip_paren(selector));
         self.token(")");
         self.b.space();
-        self.token_break_trailing_comment("{", PLUS_TWO);
+        self.token_break_trailing_comment("{", self.plus_two.clone());
         self.b.blank_line_wanted(BlankLineWanted::No);
-        self.b.open(PLUS_TWO);
+        self.b.open(self.plus_two.clone());
         let mut after_first = false;
         for c in cases {
             if after_first {
@@ -2096,7 +2107,7 @@ impl<'a> Visitor<'a> {
         self.b.close();
         self.b.forced_break();
         self.b.blank_line_wanted(BlankLineWanted::No);
-        self.token_indent("}", PLUS_TWO);
+        self.token_indent("}", self.plus_two.clone());
         self.b.close();
     }
 
@@ -2108,7 +2119,7 @@ impl<'a> Visitor<'a> {
             self.token("default");
         } else {
             self.token("case");
-            self.b.open(if c.labels.len() > 1 { PLUS_FOUR } else { ZERO });
+            self.b.open(if c.labels.len() > 1 { self.plus_four.clone() } else { ZERO });
             self.b.space();
             let mut after_first = false;
             for l in &c.labels {
@@ -2131,7 +2142,7 @@ impl<'a> Visitor<'a> {
             CaseKind::Statement => {
                 self.token(":");
                 let is_blk = c.stmts.len() == 1 && is_block(&c.stmts[0]);
-                self.b.open(if is_blk { ZERO } else { PLUS_TWO });
+                self.b.open(if is_blk { ZERO } else { self.plus_two.clone() });
                 if is_blk {
                     self.b.space();
                 }
@@ -2139,7 +2150,7 @@ impl<'a> Visitor<'a> {
                 self.b.close();
             }
             CaseKind::Rule => {
-                self.b.open(PLUS_TWO);
+                self.b.open(self.plus_two.clone());
                 self.b.space();
                 self.token("-");
                 self.token(">");
@@ -2165,7 +2176,7 @@ impl<'a> Visitor<'a> {
         self.b.space();
         if !resources.is_empty() {
             self.token("(");
-            self.b.open(if resources.len() > 1 { PLUS_FOUR } else { ZERO });
+            self.b.open(if resources.len() > 1 { self.plus_four.clone() } else { ZERO });
             let mut first = true;
             for r in resources {
                 if !first {
@@ -2224,7 +2235,7 @@ impl<'a> Visitor<'a> {
         self.token("catch");
         self.b.space();
         self.token("(");
-        self.b.open(PLUS_FOUR);
+        self.b.open(self.plus_four.clone());
         let ex = &c.param;
         if !c.union.is_empty() {
             self.b.open(ZERO);
@@ -2294,7 +2305,8 @@ impl<'a> Visitor<'a> {
             FillMode::Unified
         };
         self.b.open_op(
-            OpenOp::new(PLUS_FOUR).breakability(LastLevelBreakability::AcceptInlineChainIfSimpleOtherwiseCheckInner),
+            OpenOp::new(self.plus_four.clone())
+                .breakability(LastLevelBreakability::AcceptInlineChainIfSimpleOtherwiseCheckInner),
         );
         self.scan(operands[0]);
         let mut should_enforce_newline = self.b.most_recent_token_followed_by_newline();
@@ -2353,13 +2365,13 @@ impl<'a> Visitor<'a> {
         }
         self.token("new");
         self.b.space();
-        self.add_type_arguments(type_args, PLUS_FOUR);
+        self.add_type_arguments(type_args, self.plus_four.clone());
         if body.is_some() {
             let ops = self.visit_modifiers(&[], Direction::Horizontal, None, false);
             self.b.add_all(ops);
         }
         self.scan(ident);
-        self.add_arguments(args, PLUS_FOUR);
+        self.add_arguments(args, self.plus_four.clone());
         self.b.close();
         if let Some(body) = body {
             self.add_body_declarations(body, true, true);
@@ -2374,7 +2386,7 @@ impl<'a> Visitor<'a> {
         init: Option<&[Tree]>,
     ) {
         if let Some(elem) = elem {
-            self.b.open_op(OpenOp::new(PLUS_FOUR).breakability(LastLevelBreakability::CheckInner));
+            self.b.open_op(OpenOp::new(self.plus_four.clone()).breakability(LastLevelBreakability::CheckInner));
             self.token("new");
             self.b.space();
             let (base, extracted) = extract_dims(elem);
@@ -2400,11 +2412,11 @@ impl<'a> Visitor<'a> {
 
     fn visit_array_initializer(&mut self, expressions: &[Tree]) {
         if expressions.is_empty() {
-            self.token_break_trailing_comment("{", PLUS_TWO);
+            self.token_break_trailing_comment("{", self.plus_two.clone());
             if self.b.peek_is(",") {
                 self.token(",");
             }
-            self.token_indent("}", PLUS_TWO);
+            self.token_indent("}", self.plus_two.clone());
             return;
         }
         let exprs: Vec<&Tree> = expressions.iter().collect();
@@ -2412,7 +2424,7 @@ impl<'a> Visitor<'a> {
         if cols != -1 {
             let cols = cols as usize;
             self.b.open_op(OpenOp::new(ZERO).breakability(LastLevelBreakability::AcceptInlineChain));
-            self.b.open_op(OpenOp::new(PLUS_TWO).breakability(LastLevelBreakability::AcceptInlineChain));
+            self.b.open_op(OpenOp::new(self.plus_two.clone()).breakability(LastLevelBreakability::AcceptInlineChain));
             self.token("{");
             self.b.forced_break();
             let mut first = true;
@@ -2420,7 +2432,11 @@ impl<'a> Visitor<'a> {
                 if !first {
                     self.b.forced_break();
                 }
-                self.b.open(if matches!(row[0].kind, K::NewArray { .. }) || cols == 1 { ZERO } else { PLUS_FOUR });
+                self.b.open(if matches!(row[0].kind, K::NewArray { .. }) || cols == 1 {
+                    ZERO
+                } else {
+                    self.plus_four.clone()
+                });
                 let mut first_in_row = true;
                 for item in row {
                     if !first_in_row {
@@ -2436,7 +2452,7 @@ impl<'a> Visitor<'a> {
             }
             self.b.close();
             self.b.break_op();
-            self.token_indent("}", PLUS_TWO);
+            self.token_indent("}", self.plus_two.clone());
             self.b.close();
         } else {
             let n = self.path.len();
@@ -2444,8 +2460,8 @@ impl<'a> Visitor<'a> {
             let short_items = self.has_only_short_items(&exprs);
             let allow_filled_elements_on_own_line = short_items || !in_member_value_pair;
             self.b.open_op(OpenOp::new(ZERO).breakability(LastLevelBreakability::AcceptInlineChain));
-            self.b.open_op(OpenOp::new(PLUS_TWO).breakability(LastLevelBreakability::AcceptInlineChain));
-            self.token_break_trailing_comment("{", PLUS_TWO);
+            self.b.open_op(OpenOp::new(self.plus_two.clone()).breakability(LastLevelBreakability::AcceptInlineChain));
+            self.token_break_trailing_comment("{", self.plus_two.clone());
             let has_trailing_comma = self.has_trailing_token(exprs[exprs.len() - 1], ",");
             self.b.break_full(if has_trailing_comma { FillMode::Forced } else { FillMode::Unified }, "", ZERO, None);
             if allow_filled_elements_on_own_line {
@@ -2467,7 +2483,7 @@ impl<'a> Visitor<'a> {
             }
             self.b.close();
             self.b.break_op();
-            self.token_indent("}", PLUS_TWO);
+            self.token_indent("}", self.plus_two.clone());
             self.b.close();
         }
     }
@@ -2548,7 +2564,7 @@ impl<'a> Visitor<'a> {
     fn visit_lambda(&mut self, params: &[VarDecl], body: &Tree) {
         let statement_body = is_block(body) || matches!(body.kind, K::SwitchExpr { .. });
         let parens = self.b.peek_is("(");
-        self.b.open_op(OpenOp::new(if parens { PLUS_FOUR } else { ZERO }).name("lambda arguments"));
+        self.b.open_op(OpenOp::new(if parens { self.plus_four.clone() } else { ZERO }).name("lambda arguments"));
         if parens {
             self.token("(");
         }
@@ -2569,7 +2585,7 @@ impl<'a> Visitor<'a> {
         self.b.space();
         self.b.op("->");
         self.b.open_op(
-            OpenOp::new(if statement_body { ZERO } else { PLUS_FOUR })
+            OpenOp::new(if statement_body { ZERO } else { self.plus_four.clone() })
                 .name("lambda body")
                 .behaviour(if statement_body { prefer_breaking_last(true) } else { break_only_if_inner(false) })
                 .breakability(if statement_body {
@@ -2661,7 +2677,7 @@ impl<'a> Visitor<'a> {
                     is_text_block = self.source(primary).trim().ends_with("\"\"\"");
                 }
                 self.b.open_op(
-                    OpenOp::new(PLUS_FOUR)
+                    OpenOp::new(self.plus_four.clone())
                         .name("visitDot")
                         .behaviour(if is_text_block { break_only_if_inner(false) } else { prefer_breaking_last(true) })
                         .breakability(if is_text_block {
@@ -2744,7 +2760,7 @@ impl<'a> Visitor<'a> {
         let need_dot0 = need_dot;
         if !need_dot0 {
             self.b.open_op(
-                OpenOp::new(PLUS_FOUR)
+                OpenOp::new(self.plus_four.clone())
                     .name("visitRegularDot")
                     .behaviour(prefer_breaking_last(false))
                     .breakability(LastLevelBreakability::AcceptInlineChainIfSimpleOtherwiseCheckInner)
@@ -2752,7 +2768,7 @@ impl<'a> Visitor<'a> {
                     .simple(!trailing_dereferences),
             );
         }
-        let min_length = (INDENT_MULTIPLIER * 4) as usize;
+        let min_length = (self.indent_multiplier * 4) as usize;
         let mut length = if need_dot0 { min_length } else { 0 };
         for e in items {
             if need_dot {
@@ -2768,14 +2784,14 @@ impl<'a> Visitor<'a> {
                 self.token(".");
                 length += 1;
             }
-            if !self.fill_first_argument(e, items, if trailing_dereferences { ZERO } else { MINUS_FOUR }) {
+            if !self.fill_first_argument(e, items, if trailing_dereferences { ZERO } else { self.minus_four.clone() }) {
                 let tyarg_tag = self.b.new_tag();
                 self.dot_expression_up_to_args(e, Some(tyarg_tag));
-                let tyarg_indent = Indent::if_(tyarg_tag, PLUS_FOUR, ZERO);
+                let tyarg_indent = Indent::if_(tyarg_tag, self.plus_four.clone(), ZERO);
                 self.dot_expression_args_and_paren(
                     e,
                     tyarg_indent,
-                    if trailing_dereferences || need_dot { PLUS_FOUR } else { ZERO },
+                    if trailing_dereferences || need_dot { self.plus_four.clone() } else { ZERO },
                 );
             }
             length += e.end - e.start;
@@ -2816,7 +2832,7 @@ impl<'a> Visitor<'a> {
         let trailing_dereferences = !prefixes.is_empty() && *prefixes.last().unwrap() < items.len() - 1;
         let has_method_invocations = items.iter().any(|e| matches!(e.kind, K::MethodInvocation { .. }));
         self.b.open_op(
-            OpenOp::new(PLUS_FOUR)
+            OpenOp::new(self.plus_four.clone())
                 .name("visitDotWithPrefix")
                 .behaviour(prefer_breaking_last(false))
                 .breakability(if has_method_invocations {
@@ -2856,8 +2872,12 @@ impl<'a> Visitor<'a> {
                 self.b.close();
                 unconsumed.pop_front();
             }
-            let tyarg_indent = Indent::if_(tyarg_tag, PLUS_FOUR, ZERO);
-            let args_indent = Indent::if_(name_tag, PLUS_FOUR, if trailing_dereferences { PLUS_FOUR } else { ZERO });
+            let tyarg_indent = Indent::if_(tyarg_tag, self.plus_four.clone(), ZERO);
+            let args_indent = Indent::if_(
+                name_tag,
+                self.plus_four.clone(),
+                if trailing_dereferences { self.plus_four.clone() } else { ZERO },
+            );
             self.dot_expression_args_and_paren(e, tyarg_indent, args_indent);
             need_dot = true;
         }
@@ -2870,7 +2890,7 @@ impl<'a> Visitor<'a> {
             K::MemberSelect { name, .. } => self.token(name),
             K::MethodInvocation { select, type_args, .. } => {
                 if !type_args.is_empty() {
-                    self.b.open(PLUS_FOUR);
+                    self.b.open(self.plus_four.clone());
                     self.add_type_arguments(type_args, ZERO);
                     self.b.break_full(FillMode::Unified, "", ZERO, tyarg_tag);
                     self.b.close();
@@ -2951,7 +2971,7 @@ impl<'a> Visitor<'a> {
                         self.token(",");
                         self.b.forced_break();
                     }
-                    self.b.open(PLUS_FOUR);
+                    self.b.open(self.plus_four.clone());
                     self.scan(pair[0]);
                     self.token(",");
                     self.b.break_flat(" ");

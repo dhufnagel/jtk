@@ -46,6 +46,7 @@ function settingsFor(document: vscode.TextDocument): { path: string; settings: F
       sortImports: config.get<boolean>("sortImports", true),
       removeUnusedImports: config.get<boolean>("removeUnusedImports", true),
       reflowLongStrings: config.get<boolean>("reflowLongStrings", true),
+      formatJavadoc: config.get<boolean>("formatJavadoc", false),
       timeoutMs: config.get<number>("timeout", 10000),
     },
   };

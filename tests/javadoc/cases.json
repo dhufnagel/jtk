@@ -1,0 +1,1176 @@
+[
+ {
+  "name": "notJavadoc",
+  "input": [
+   "/**/",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**/",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "empty",
+  "input": [
+   "/***/",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "emptyMultipleLines",
+  "input": [
+   "/**",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "simple",
+  "input": [
+   "/** */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "commentMostlyUntouched",
+  "input": [
+   "/**",
+   " * Foo.",
+   " *",
+   " *  <!--",
+   "*abc",
+   " *   def   ",
+   " * </tr>",
+   " *-->bar",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Foo.",
+   " * <!--",
+   " *abc",
+   " *   def",
+   " * </tr>",
+   " *-->",
+   " * bar",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "moeComments",
+  "input": [
+   "/**",
+   " * Deatomizes the given user.",
+   " * <!-- MOE:begin_intracomment_strip -->",
+   " * See go/deatomizer-v5 for the design doc.",
+   " * <!-- MOE:end_intracomment_strip -->",
+   " * To reatomize, call {@link reatomize}.",
+   " *",
+   " * <!-- MOE:begin_intracomment_strip -->",
+   " * <p>This method is used in the Google teleporter.",
+   " *",
+   " * <p>Yes, we have a teleporter.",
+   " * <!-- MOE:end_intracomment_strip -->",
+   " *",
+   " * @param user the person to teleport.",
+   " *     <!-- MOE:begin_intracomment_strip -->",
+   " *     Users must sign go/deatomize-waiver ahead of time.",
+   " *     <!-- MOE:end_intracomment_strip -->",
+   " * <!-- MOE:begin_intracomment_strip -->",
+   " * @deprecated Sometimes turns the user into a goat.",
+   " * <!-- MOE:end_intracomment_strip -->",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Deatomizes the given user.",
+   " * <!-- MOE:begin_intracomment_strip -->",
+   " * See go/deatomizer-v5 for the design doc.",
+   " * <!-- MOE:end_intracomment_strip -->",
+   " * To reatomize, call {@link reatomize}.",
+   " *",
+   " * <!-- MOE:begin_intracomment_strip -->",
+   " * <p>This method is used in the Google teleporter.",
+   " *",
+   " * <p>Yes, we have a teleporter.",
+   " * <!-- MOE:end_intracomment_strip -->",
+   " *",
+   " * @param user the person to teleport.",
+   " *     <!-- MOE:begin_intracomment_strip -->",
+   " *     Users must sign go/deatomize-waiver ahead of time.",
+   " *     <!-- MOE:end_intracomment_strip -->",
+   " * <!-- MOE:begin_intracomment_strip -->",
+   " * @deprecated Sometimes turns the user into a goat.",
+   " * <!-- MOE:end_intracomment_strip -->",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "moeCommentBeginOnlyInMiddleOfDoc",
+  "input": [
+   "/**",
+   " * Foo.",
+   " * <!-- MOE:begin_intracomment_strip -->",
+   " * Bar.",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Foo.",
+   " * <!-- MOE:begin_intracomment_strip -->",
+   " * Bar.",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "moeCommentBeginOnlyAtEndOfDoc",
+  "input": [
+   "/**",
+   " * Foo.",
+   " * <!-- MOE:begin_intracomment_strip -->",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** Foo. */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "moeCommentEndOnly",
+  "input": [
+   "/**",
+   " * Foo.",
+   " * <!-- MOE:end_intracomment_strip -->",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Foo.",
+   " * <!-- MOE:end_intracomment_strip -->",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "tableMostlyUntouched",
+  "input": [
+   "/**",
+   " * Foo.",
+   " *",
+   " *  <table>",
+   "*<tr><td>a<td>b</tr>",
+   " * <tr>",
+   " * <td>A",
+   " *     <td>B",
+   " * </tr>",
+   " *</table>",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Foo.",
+   " *",
+   " * <table>",
+   " * <tr><td>a<td>b</tr>",
+   " * <tr>",
+   " * <td>A",
+   " *     <td>B",
+   " * </tr>",
+   " * </table>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "preMostlyUntouched",
+  "input": [
+   "/**",
+   " * Example:",
+   " *",
+   " *  <pre>",
+   "*    1 2<br>    3   ",
+   " *4 5 6",
+   "7 8",
+   " *</pre>",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Example:",
+   " *",
+   " * <pre>",
+   " *    1 2<br>    3",
+   " * 4 5 6",
+   " * 7 8",
+   " * </pre>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "preCodeExample",
+  "input": [
+   "/**",
+   " * Example:",
+   " *",
+   " * <pre>   {@code",
+   " *",
+   " *   Abc.def(foo, 7, true); // blah}</pre>",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Example:",
+   " *",
+   " * <pre>{@code",
+   " * Abc.def(foo, 7, true); // blah",
+   " * }</pre>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "preNotWrapped",
+  "input": [
+   "/**",
+   " * Example:",
+   " *",
+   " * <pre>",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 45678901",
+   " * </pre>",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Example:",
+   " *",
+   " * <pre>",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 45678901",
+   " * </pre>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "javaCodeInPre",
+  "input": [
+   "/**",
+   " * Example:",
+   " *",
+   " *<pre>",
+   " * aaaaa    |   a  |   +",
+   " * \"bbbb    |   b  |  \"",
+   " *</pre>",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Example:",
+   " *",
+   " * <pre>",
+   " * aaaaa    |   a  |   +",
+   " * \"bbbb    |   b  |  \"",
+   " * </pre>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "joinLines",
+  "input": [
+   "/**",
+   " * foo",
+   " * bar",
+   " * baz",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** foo bar baz */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "oneLinerIs100",
+  "input": [
+   "/**",
+   " * 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567 */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "oneLinerWouldBe101",
+  "input": [
+   "/**",
+   " * 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123 5678",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123 5678",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "multilineWrap",
+  "input": [
+   "/**",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 45678901",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012",
+   " * 45678901",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "tooLong",
+  "input": [
+   "/**",
+   " * abc",
+   " *",
+   " * <p>7890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * abc",
+   " *",
+   " * <p>7890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "joinedTokens",
+  "input": [
+   "/**",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 4<b>8901",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012",
+   " * 4<b>8901",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "joinedAtSign",
+  "input": [
+   "/**",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 @5678901",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012",
+   " * 456789012 @5678901",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "joinedMultipleAtSign",
+  "input": [
+   "/**",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 @56789012 @5678901",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012",
+   " * 456789012 @56789012 @5678901",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "noAsterisk",
+  "input": [
+   "/**",
+   " abc<p>def",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * abc",
+   " *",
+   " * <p>def",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "significantAsterisks",
+  "input": [
+   "/** *",
+   " * *",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** * * */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "links",
+  "input": [
+   "/**",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 4567 <a",
+   " * href=foo>foo</a>.",
+   " *",
+   " * <p>789012 456789012 456789012 456789012 456789012 456789012 456789012 456789 <a href=foo>",
+   " * foo</a>.",
+   " *",
+   " * <p>789012 456789012 456789012 456789012 456789012 456789012 456789012 4567890 <a href=foo>",
+   " * foo</a>.",
+   " *",
+   " * <p><a href=foo>",
+   " * foo</a>.",
+   " *",
+   " * <p>foo <a href=bar>",
+   " * bar</a>.",
+   " *",
+   " * <p>foo-<a href=bar>",
+   " * bar</a>.",
+   " *",
+   " * <p>foo<a href=bar>",
+   " * bar</a>.",
+   " *",
+   " * <p><a href=foo>foo</a> bar.",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 456789012 4567 <a",
+   " * href=foo>foo</a>.",
+   " *",
+   " * <p>789012 456789012 456789012 456789012 456789012 456789012 456789012 456789 <a href=foo>foo</a>.",
+   " *",
+   " * <p>789012 456789012 456789012 456789012 456789012 456789012 456789012 4567890 <a href=foo>",
+   " * foo</a>.",
+   " *",
+   " * <p><a href=foo>foo</a>.",
+   " *",
+   " * <p>foo <a href=bar>bar</a>.",
+   " *",
+   " * <p>foo-<a href=bar>bar</a>.",
+   " *",
+   " * <p>foo<a href=bar>bar</a>.",
+   " *",
+   " * <p><a href=foo>foo</a> bar.",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "heading",
+  "input": [
+   "/**",
+   " * abc<h1>def</h1>ghi",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * abc",
+   " *",
+   " * <h1>def</h1>",
+   " *",
+   " * ghi",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "blockquote",
+  "input": [
+   "/**",
+   " * abc<blockquote><p>def</blockquote>ghi",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * abc",
+   " *",
+   " * <blockquote>",
+   " *",
+   " * <p>def",
+   " *",
+   " * </blockquote>",
+   " *",
+   " * ghi",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "lists",
+  "input": [
+   "/**",
+   "* hi",
+   "*",
+   "* <ul>",
+   "* <li>",
+   "* <ul>",
+   "* <li>a</li>",
+   "* </ul>",
+   "* </li>",
+   "* </ul>",
+   "*/",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * hi",
+   " *",
+   " * <ul>",
+   " *   <li>",
+   " *       <ul>",
+   " *         <li>a",
+   " *       </ul>",
+   " * </ul>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "lists2",
+  "input": [
+   "/**",
+   " * Foo.",
+   " *",
+   " * <ul><li>1<ul><li>1a<li>1b</ul>more 1<p>still more 1<li>2</ul>",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Foo.",
+   " *",
+   " * <ul>",
+   " *   <li>1",
+   " *       <ul>",
+   " *         <li>1a",
+   " *         <li>1b",
+   " *       </ul>",
+   " *       more 1",
+   " *       <p>still more 1",
+   " *   <li>2",
+   " * </ul>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "closeInnerListStillNewline",
+  "input": [
+   "/**",
+   " * Foo.",
+   " *",
+   " * <ul><li><ul><li>a</ul>b</ul>",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Foo.",
+   " *",
+   " * <ul>",
+   " *   <li>",
+   " *       <ul>",
+   " *         <li>a",
+   " *       </ul>",
+   " *       b",
+   " * </ul>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "listItemWrap",
+  "input": [
+   "/**",
+   " * Foo.",
+   " *",
+   " * <ul><li>234567890 234567890 234567890 234567890 234567890 234567890 234567890 234567890 234567890 234567890</ul>",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Foo.",
+   " *",
+   " * <ul>",
+   " *   <li>234567890 234567890 234567890 234567890 234567890 234567890 234567890 234567890 234567890",
+   " *       234567890",
+   " * </ul>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "unclosedList",
+  "input": [
+   "/**",
+   " * Foo.",
+   " *",
+   " * <ul><li>1",
+   " * @return blah",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Foo.",
+   " *",
+   " * <ul>",
+   " *   <li>1",
+   " *",
+   " * @return blah",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "br",
+  "input": [
+   "/**",
+   " * abc<br>def",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * abc<br>",
+   " * def",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "brSpaceBug",
+  "input": [
+   "/**",
+   " * abc <br>def",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * abc <br>",
+   " * def",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "brAtSignBug",
+  "input": [
+   "/**",
+   " * abc<br>@foo ",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * abc<br>",
+   " * @foo",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "unicodeCharacterCountArguableBug",
+  "input": [
+   "/**",
+   " * 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12 456789𝄞12",
+   " * 456789𝄞12 456789𝄞",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "blankLineBeforeParams",
+  "input": [
+   "/**",
+   " * hello world",
+   " * @param this is a param",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * hello world",
+   " *",
+   " * @param this is a param",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "onlyParams",
+  "input": [
+   "/**",
+   " *",
+   " *",
+   " * @param this is a param",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** @param this is a param */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "paramsContinuationIndented",
+  "input": [
+   "/**",
+   " * hello world",
+   " *",
+   " * @param foo 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123",
+   " * @param bar another",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * hello world",
+   " *",
+   " * @param foo 567890123 567890123 567890123 567890123 567890123 567890123 567890123 567890123",
+   " *     567890123",
+   " * @param bar another",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "paramsOtherIndents",
+  "input": [
+   "/**",
+   " * hello world",
+   " *",
+   " * @param foo a<p>b<ul><li>a<ul><li>x</ul></ul>",
+   " * @param bar another",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * hello world",
+   " *",
+   " * @param foo a",
+   " *     <p>b",
+   " *     <ul>",
+   " *       <li>a",
+   " *           <ul>",
+   " *             <li>x",
+   " *           </ul>",
+   " *     </ul>",
+   " *",
+   " * @param bar another",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "paragraphTag",
+  "input": [
+   "class Test {",
+   "  /**",
+   "   * hello<p>world",
+   "   */",
+   "  void f() {}",
+   "",
+   "  /**",
+   "   * hello",
+   "   * <p>",
+   "   * world",
+   "   */",
+   "  void f() {}",
+   "}"
+  ],
+  "expected": [
+   "class Test {",
+   "  /**",
+   "   * hello",
+   "   *",
+   "   * <p>world",
+   "   */",
+   "  void f() {}",
+   "",
+   "  /**",
+   "   * hello",
+   "   *",
+   "   * <p>world",
+   "   */",
+   "  void f() {}",
+   "}"
+  ]
+ },
+ {
+  "name": "xhtmlParagraphTag",
+  "input": [
+   "class Test {",
+   "  /**",
+   "   * hello<p/>world",
+   "   */",
+   "  void f() {}",
+   "",
+   "}"
+  ],
+  "expected": [
+   "class Test {",
+   "  /**",
+   "   * hello",
+   "   *",
+   "   * <p>world",
+   "   */",
+   "  void f() {}",
+   "}"
+  ]
+ },
+ {
+  "name": "removeInitialParagraphTag",
+  "input": [
+   "/**",
+   " * <p>hello<p>world",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * hello",
+   " *",
+   " * <p>world",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "inferParagraphTags",
+  "input": [
+   "/**",
+   " *",
+   " *",
+   " * foo",
+   " * foo",
+   " *",
+   " *",
+   " * foo",
+   " *",
+   " * bar",
+   " *",
+   " * <pre>",
+   " *",
+   " * baz",
+   " *",
+   " * </pre>",
+   " *",
+   " * <ul>",
+   " * <li>foo",
+   " *",
+   " * bar",
+   " * </ul>",
+   " *",
+   " *",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * foo foo",
+   " *",
+   " * <p>foo",
+   " *",
+   " * <p>bar",
+   " *",
+   " * <pre>",
+   " *",
+   " * baz",
+   " *",
+   " * </pre>",
+   " *",
+   " * <ul>",
+   " *   <li>foo",
+   " *       <p>bar",
+   " * </ul>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "htmlTagsInCode",
+  "input": [
+   "/** abc {@code {} <p> <li> <pre> <table>} def */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** abc {@code {} <p> <li> <pre> <table>} def */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "loneBraceDoesNotStartInlineTag",
+  "input": [
+   "/** {  <p> } */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * {",
+   " *",
+   " * <p>}",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "unicodeEscapesNotReplaced",
+  "input": [
+   "/** a\\u003Cp>b */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** a\\u003Cp>b */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "trailingLink",
+  "input": [
+   "/**",
+   " * abc {@link Foo}",
+   " * def",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** abc {@link Foo} def */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "doesNotBreakLink",
+  "input": [
+   "/**",
+   " * This line is too long for the link to fit on a single line isn't it yes indeed too long {@link Foo}",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * This line is too long for the link to fit on a single line isn't it yes indeed too long",
+   " * {@link Foo}",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "wrapsLongInlineTag_withoutBreakingFirstWhitespace",
+  "input": [
+   "/**",
+   " * Example:",
+   " *",
+   " * <pre>    {@code",
+   " *   class T {",
+   " *   }",
+   " * }</pre>",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * Example:",
+   " *",
+   " * <pre>{@code",
+   " * class T {",
+   " * }",
+   " * }</pre>",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "codeInCode",
+  "input": [
+   "/** abc {@code {@code foo}} def */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** abc {@code {@code foo}} def */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "quotedTextSplitAcrossLinks",
+  "input": [
+   "/**",
+   " * abc \"foo",
+   " * bar baz\" def",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** abc \"foo bar baz\" def */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "standardizeTags",
+  "input": [
+   "/**",
+   " * foo",
+   " *",
+   " * <P>bar",
+   " *",
+   " * <p class=clazz>baz<BR>",
+   " * baz",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * foo",
+   " *",
+   " * <p>bar",
+   " *",
+   " * <p class=clazz>baz<br>",
+   " * baz",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "removeCloseTags",
+  "input": [
+   "/**",
+   " * foo</p>",
+   " *",
+   " * <p>bar</p>",
+   " */",
+   "class Test {}"
+  ],
+  "expected": [
+   "/**",
+   " * foo",
+   " *",
+   " * <p>bar",
+   " */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "javadocFullSentences",
+  "input": [
+   "/** In our application, bats are often found hanging from the ceiling, especially on Wednesdays.  Sometimes sick bats have issues where their claws do not close entirely.  This class provides a nice, grippable surface for them to cling to. */",
+   "class Grippable {}"
+  ],
+  "expected": [
+   "/**",
+   " * In our application, bats are often found hanging from the ceiling, especially on Wednesdays.",
+   " * Sometimes sick bats have issues where their claws do not close entirely. This class provides a",
+   " * nice, grippable surface for them to cling to.",
+   " */",
+   "class Grippable {}"
+  ]
+ },
+ {
+  "name": "javadocSentenceFragment",
+  "input": [
+   "/** Provides a comfy, grippable surface for sick bats with claw-closing problems, which are sometimes found hanging from the ceiling on Wednesdays. */",
+   "class Grippable {}"
+  ],
+  "expected": [
+   "/**",
+   " * Provides a comfy, grippable surface for sick bats with claw-closing problems, which are sometimes",
+   " * found hanging from the ceiling on Wednesdays.",
+   " */",
+   "class Grippable {}"
+  ]
+ },
+ {
+  "name": "javadocCanEndAnywhere",
+  "input": [
+   "/** foo <pre*/",
+   "class Test {}"
+  ],
+  "expected": [
+   "/** foo <pre */",
+   "class Test {}"
+  ]
+ },
+ {
+  "name": "u2028LineSeparator",
+  "input": [
+   "public class Foo {",
+   "  /** ",
+   "   * Set and enable something.",
+   "   */",
+   "  public void setSomething() {}",
+   "}"
+  ],
+  "expected": [
+   "public class Foo {",
+   "  /**",
+   "   *   Set and enable something.",
+   "   */",
+   "  public void setSomething() {}",
+   "}"
+  ]
+ }
+]
