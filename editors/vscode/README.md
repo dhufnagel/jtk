@@ -1,6 +1,6 @@
 # jtk for Visual Studio Code
 
-Formats and lints Java with [jtk](https://github.com/buchner-org/jtk): the same formatting as
+Formats and lints Java with [jtk](https://github.com/dhufnagel/jtk): the same formatting as
 [palantir-java-format](https://github.com/palantir/palantir-java-format), without a JVM, and rules from Checkstyle,
 PMD and the Eclipse save actions. The extension runs `jtk lsp` as a language server.
 
@@ -11,7 +11,7 @@ PMD and the Eclipse save actions. The extension runs `jtk lsp` as a language ser
 - **Format Document** and **Format Selection**, also on save.
 
 The nearest `jtk.toml` of a file applies: the selected rules, their parameters and the formatting steps (see the
-[jtk README](https://github.com/buchner-org/jtk#configuration)). Changes to it apply right away.
+[jtk README](https://github.com/dhufnagel/jtk#configuration)). Changes to it apply right away.
 
 ## Setup
 
@@ -19,7 +19,7 @@ Make jtk the formatter for Java, and optionally format and fix on save (in your 
 
 ```json
 "[java]": {
-  "editor.defaultFormatter": "buchner-org.jtk",
+  "editor.defaultFormatter": "dhufnagel.jtk",
   "editor.formatOnSave": true,
   "editor.codeActionsOnSave": { "source.fixAll.jtk": "explicit" }
 }

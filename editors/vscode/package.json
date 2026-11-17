@@ -3,11 +3,11 @@
   "displayName": "jtk – Java formatter and linter",
   "description": "Fast Java formatter, compatible with palantir-java-format (same output, no JVM), and linter with fixes.",
   "version": "0.2.0",
-  "publisher": "buchner-org",
+  "publisher": "dhufnagel",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/buchner-org/jtk.git",
+    "url": "https://github.com/dhufnagel/jtk.git",
     "directory": "editors/vscode"
   },
   "engines": {
