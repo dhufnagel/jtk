@@ -45,11 +45,12 @@ jtk with its own rule sets:
 
 | Corpus | Default rules | All rules | `jtk check` (format and all rules) |
 |---|---|---|---|
-| commons-lang | 0.23 s (CPU 2.6 s) | 0.49 s (CPU 5.1 s) | 1.4 s (CPU 16 s) |
-| JDK 25 | 4.9 s (CPU 62 s) | 10.4 s (CPU 121 s) | 29.5 s (CPU 357 s) |
+| commons-lang | 0.23 s (CPU 2.6 s) | 0.49 s (CPU 5.1 s) | 0.94 s (CPU 10 s) |
+| JDK 25 | 4.9 s (CPU 62 s) | 10.4 s (CPU 121 s) | 20.0 s (CPU 218 s) |
 
-For comparison, palantir-java-format, Checkstyle and PMD one after the other take 32 s on commons-lang and 428 s
-on the JDK.
+`jtk check` takes less than formatting and linting separately, as both share the parse of each file. For
+comparison, palantir-java-format, Checkstyle and PMD one after the other take 32 s on commons-lang and 428 s on the
+JDK.
 
 ## Notes
 

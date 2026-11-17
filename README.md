@@ -159,7 +159,7 @@ Violations are suppressed by `// jtk:ignore` or `// jtk:ignore[S001]` on their l
 equivalent rules: `@SuppressWarnings` with `"checkstyle:needbraces"`, `"NeedBraces"`, `"PMD.ControlStatementBraces"`,
 `"PMD"` or `"unused"`, and `// NOPMD`.
 
-`jtk check` lints each file on the formatter's thread, reusing the syntax tree of the formatted text. With the rules
+`jtk check` lints each file on the formatter's thread, sharing the parse of the file with the formatter. With the rules
 that Checkstyle and PMD also have, `jtk lint` is 17 to 23 times faster than Checkstyle and 2.6 to 16 times faster than
 PMD ([docs/benchmark.md](docs/benchmark.md)).
 

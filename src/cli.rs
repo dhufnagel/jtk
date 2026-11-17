@@ -713,17 +713,13 @@ fn check_files(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32
     if all_ok { 0 } else { 1 }
 }
 
-/// Formats the input and lints the text that is on disk afterwards, so that positions match the file. Linting the
-/// formatted text reuses the formatter's syntax tree; an unformatted input left unchanged needs its own parse.
+/// Formats the input and lints the text that is on disk afterwards, so that positions match the file: the formatted
+/// text with `-i`, otherwise the input (which is the formatted text too if the file is formatted).
 fn check_input(job: &LintJob, o: &LintOptions) -> Result<(String, Vec<Diagnostic>), FormatError> {
     let input = &job.text;
     let fixed = if o.fix { lint::fix_with(input, &job.settings, o.unsafe_fixes)? } else { input.clone() };
-    let path = Some(Path::new(&job.file));
-    let (formatted, diagnostics) = format_and_lint(&fixed, path, &job.format, &job.settings)?;
-    if o.in_place || formatted == *input {
-        return Ok((formatted, diagnostics));
-    }
-    Ok((formatted, lint::lint_file(input, path, &job.settings)?))
+    let linted = (!o.in_place).then_some(input.as_str());
+    format_and_lint(&fixed, linted, Some(Path::new(&job.file)), &job.format, &job.settings)
 }
 
 /// Prints the violations as `file:line:column: CODE message`; returns whether there were none.

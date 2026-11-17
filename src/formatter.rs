@@ -92,18 +92,27 @@ pub fn format(text: &str, options: &FormatOptions) -> Result<String, FormatError
     format_file(text, &[(0, text.len())], options)
 }
 
-/// Formats like [`format`] and lints the result on the same thread, so that the linter reuses the syntax tree the
-/// formatter parsed last (the formatted text, unless long strings were reflowed).
+/// Formats `text` like [`format`] and lints `linted`, or the formatted text if that is `None`, on the same thread:
+/// parsing is shared through the per-thread cache of the last syntax tree. `linted` is linted before formatting, so
+/// that formatting reuses its tree if it is `text`; the formatted text is linted after formatting, which parsed it
+/// last (unless long strings were reflowed).
 pub fn format_and_lint(
     text: &str,
+    linted: Option<&str>,
     path: Option<&std::path::Path>,
     options: &FormatOptions,
     settings: &Settings,
 ) -> Result<(String, Vec<Diagnostic>), FormatError> {
-    with_large_stack(|| {
-        let formatted = format_on_current_thread(text, &[(0, text.len())], options)?;
-        let diagnostics = lint::lint_file(&formatted, path, settings)?;
-        Ok((formatted, diagnostics))
+    with_large_stack(|| match linted {
+        Some(linted) => {
+            let diagnostics = lint::lint_file(linted, path, settings)?;
+            Ok((format_on_current_thread(text, &[(0, text.len())], options)?, diagnostics))
+        }
+        None => {
+            let formatted = format_on_current_thread(text, &[(0, text.len())], options)?;
+            let diagnostics = lint::lint_file(&formatted, path, settings)?;
+            Ok((formatted, diagnostics))
+        }
     })
 }
 
