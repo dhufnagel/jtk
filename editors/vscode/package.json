@@ -76,7 +76,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "test": "npm run compile && node --test out/test/",
+    "test": "npm run compile && node --test \"out/test/*.test.js\"",
     "bundle-binary": "node scripts/bundle-binary.mjs",
     "package": "npm run compile && npm run bundle-binary && vsce package"
   },
