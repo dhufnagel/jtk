@@ -328,6 +328,204 @@ impl Tree {
         Tree { start, end, kind }
     }
 
+    /// Calls `f` on each direct subtree, in source order. Annotations in modifiers, the types and initializers of
+    /// variables and the parts of cases, catches, classes and methods are subtrees; names stored as strings are not.
+    pub fn for_each_child<'t>(&'t self, f: &mut impl FnMut(&'t Tree)) {
+        fn var<'t>(v: &'t VarDecl, f: &mut impl FnMut(&'t Tree)) {
+            v.mods.annotations.iter().for_each(&mut *f);
+            v.ty.iter().for_each(|t| f(t));
+            v.init.iter().for_each(|t| f(t));
+        }
+        fn case<'t>(c: &'t Case, f: &mut impl FnMut(&'t Tree)) {
+            c.labels.iter().for_each(&mut *f);
+            c.guard.iter().for_each(|t| f(t));
+            c.stmts.iter().for_each(&mut *f);
+            c.body.iter().for_each(|t| f(t));
+        }
+        match &self.kind {
+            K::CompilationUnit { package, imports, types, module } => {
+                if let Some((annotations, name)) = package {
+                    annotations.iter().for_each(&mut *f);
+                    f(name);
+                }
+                imports.iter().for_each(&mut *f);
+                types.iter().for_each(&mut *f);
+                module.iter().for_each(|t| f(t));
+            }
+            K::Import { name, .. } => f(name),
+            K::Class(c) => {
+                c.mods.annotations.iter().for_each(&mut *f);
+                c.type_params.iter().for_each(&mut *f);
+                c.record_components.iter().for_each(|v| var(v, f));
+                c.extends.iter().for_each(|t| f(t));
+                c.implements.iter().for_each(&mut *f);
+                c.permits.iter().for_each(&mut *f);
+                for e in &c.enum_constants {
+                    e.mods.annotations.iter().for_each(&mut *f);
+                    e.args.iter().for_each(&mut *f);
+                    e.body.iter().flatten().for_each(&mut *f);
+                }
+                c.members.iter().for_each(&mut *f);
+            }
+            K::Method(m) => {
+                m.mods.annotations.iter().for_each(&mut *f);
+                m.type_params.iter().for_each(&mut *f);
+                m.return_type_annotations.iter().for_each(&mut *f);
+                m.ret.iter().for_each(|t| f(t));
+                m.receiver.iter().for_each(|v| var(v, f));
+                m.params.iter().for_each(|v| var(v, f));
+                m.throws.iter().for_each(&mut *f);
+                m.body.iter().for_each(|t| f(t));
+                m.default_value.iter().for_each(|t| f(t));
+            }
+            K::Vars(vars) => vars.iter().for_each(|v| var(v, f)),
+            K::Var(v) => var(v, f),
+            K::Block { stmts, .. } => stmts.iter().for_each(&mut *f),
+            K::Empty
+            | K::Ident(_)
+            | K::Literal(_)
+            | K::Primitive(_)
+            | K::AnyPattern
+            | K::DefaultCaseLabel
+            | K::Break(_)
+            | K::Continue(_) => {}
+            K::ExprStmt(e) | K::Throw(e) | K::Yield(e) | K::Parens(e) => f(e),
+            K::If { cond, then, else_ } => {
+                f(cond);
+                f(then);
+                else_.iter().for_each(|t| f(t));
+            }
+            K::While { cond, body } => {
+                f(cond);
+                f(body);
+            }
+            K::DoWhile { body, cond } => {
+                f(body);
+                f(cond);
+            }
+            K::For { init, cond, update, body } => {
+                init.iter().for_each(&mut *f);
+                cond.iter().for_each(|t| f(t));
+                update.iter().for_each(&mut *f);
+                f(body);
+            }
+            K::ForEach { var: v, expr, body } => {
+                var(v, f);
+                f(expr);
+                f(body);
+            }
+            K::Labeled { body, .. } => f(body),
+            K::Switch { selector, cases } | K::SwitchExpr { selector, cases } => {
+                f(selector);
+                cases.iter().for_each(|c| case(c, f));
+            }
+            K::Try { resources, block, catches, finally } => {
+                resources.iter().for_each(&mut *f);
+                f(block);
+                for c in catches {
+                    var(&c.param, f);
+                    f(&c.block);
+                }
+                finally.iter().for_each(|t| f(t));
+            }
+            K::Return(e) => e.iter().for_each(|t| f(t)),
+            K::Synchronized { lock, block } => {
+                f(lock);
+                f(block);
+            }
+            K::Assert { cond, detail } => {
+                f(cond);
+                detail.iter().for_each(|t| f(t));
+            }
+            K::MemberSelect { expr, .. } => f(expr),
+            K::MethodInvocation { select, type_args, args } => {
+                f(select);
+                type_args.iter().for_each(&mut *f);
+                args.iter().for_each(&mut *f);
+            }
+            K::ArrayAccess { expr, index } => {
+                f(expr);
+                f(index);
+            }
+            K::Binary { lhs, rhs, .. } | K::Assign { lhs, rhs, .. } => {
+                f(lhs);
+                f(rhs);
+            }
+            K::Unary { expr, .. } => f(expr),
+            K::Conditional { cond, then, else_ } => {
+                f(cond);
+                f(then);
+                f(else_);
+            }
+            K::InstanceOf { expr, target } => {
+                f(expr);
+                f(target);
+            }
+            K::Cast { ty, expr } => {
+                f(ty);
+                f(expr);
+            }
+            K::NewClass { outer, type_args, ident, args, body } => {
+                outer.iter().for_each(|t| f(t));
+                type_args.iter().for_each(&mut *f);
+                f(ident);
+                args.iter().for_each(&mut *f);
+                body.iter().flatten().for_each(&mut *f);
+            }
+            K::NewArray { elem, dims, dim_annotations, init } => {
+                elem.iter().for_each(|t| f(t));
+                dims.iter().for_each(&mut *f);
+                dim_annotations.iter().flatten().for_each(&mut *f);
+                init.iter().flatten().for_each(&mut *f);
+            }
+            K::Lambda { params, body } => {
+                params.iter().for_each(|v| var(v, f));
+                f(body);
+            }
+            K::MemberRef { qual, type_args, .. } => {
+                f(qual);
+                type_args.iter().for_each(&mut *f);
+            }
+            K::ArrayType { elem, dims } => {
+                f(elem);
+                dims.iter().flatten().for_each(&mut *f);
+            }
+            K::Parameterized { base, args } => {
+                f(base);
+                args.iter().for_each(&mut *f);
+            }
+            K::Wildcard { bound } => bound.iter().for_each(|(_, t)| f(t)),
+            K::Annotated { annotations, base } => {
+                annotations.iter().for_each(&mut *f);
+                f(base);
+            }
+            K::Union(types) | K::Intersection(types) => types.iter().for_each(&mut *f),
+            K::Annotation { ty, args } => {
+                f(ty);
+                args.iter().for_each(&mut *f);
+            }
+            K::TypeParameter { annotations, bounds, .. } => {
+                annotations.iter().for_each(&mut *f);
+                bounds.iter().for_each(&mut *f);
+            }
+            K::BindingPattern { var: v } => var(v, f),
+            K::RecordPattern { ty, nested } => {
+                f(ty);
+                nested.iter().for_each(&mut *f);
+            }
+            K::Module { annotations, name, directives, .. } => {
+                annotations.iter().for_each(&mut *f);
+                f(name);
+                directives.iter().for_each(&mut *f);
+            }
+            K::Directive { name, items, .. } => {
+                f(name);
+                items.iter().flatten().for_each(&mut *f);
+            }
+            K::Requires { name } | K::Uses { name } => f(name),
+        }
+    }
+
     pub fn is_expression(&self) -> bool {
         matches!(
             self.kind,

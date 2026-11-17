@@ -97,7 +97,7 @@ pub struct JavaInput {
     pub line_separator: &'static str,
 }
 
-enum RawKind {
+pub(crate) enum RawKind {
     Whitespace,
     Comment,
     Token,
@@ -117,11 +117,11 @@ fn is_ident_part(c: char) -> bool {
 
 /// Lex the input into raw `(kind, start, end)` toks.
 /// A raw tok: its kind and byte range.
-type RawTok = (RawKind, usize, usize);
+pub(crate) type RawTok = (RawKind, usize, usize);
 
 /// Lexes the input. With `stop_at_type`, lexing stops before the first `class`, `interface` or `enum` keyword, whose
 /// position is returned (as with javac's stop tokens in `ImportOrderer`).
-fn lex(text: &str, stop_at_type: bool) -> Result<(Vec<RawTok>, Option<usize>), LexError> {
+pub(crate) fn lex(text: &str, stop_at_type: bool) -> Result<(Vec<RawTok>, Option<usize>), LexError> {
     let bytes = text.as_bytes();
     let mut out = Vec::new();
     let mut i = 0;

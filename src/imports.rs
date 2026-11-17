@@ -9,6 +9,7 @@ use std::collections::HashSet;
 
 use tree_sitter::Node;
 
+use crate::ast::{K, Tree};
 use crate::input::{Tok, build_toks_until};
 use crate::newlines;
 
@@ -232,6 +233,9 @@ pub fn remove_unused_imports(contents: &str) -> String {
 /// Formatting only changes whitespace and the order of modifiers, so this can be computed on the unformatted input
 /// (whose syntax tree is already cached) and applied to the formatted output with [`remove_imports`].
 pub fn used_import_names(source: &str) -> Option<HashSet<String>> {
+    if let Some(unit) = crate::parser::parse_cached(source) {
+        return Some(used_import_names_in(&unit, source));
+    }
     let tree = crate::parse::parse(source)?;
     let root = tree.root_node();
     if root.has_error() {
@@ -258,6 +262,84 @@ pub fn used_import_names(source: &str) -> Option<HashSet<String>> {
         collect_used_names(root, source, &candidates, &mut used);
     }
     Some(used)
+}
+
+/// [`used_import_names`] from the hand-written parser's tree. It finds the same names as the tree-sitter version: in
+/// that tree, declared names, labels and the members of qualified names are strings, not identifiers.
+fn used_import_names_in(unit: &Tree, source: &str) -> HashSet<String> {
+    let K::CompilationUnit { imports, .. } = &unit.kind else { return HashSet::new() };
+    // The simple name of each import (for `a.b.*`, `b`).
+    let candidates: HashSet<&str> = imports
+        .iter()
+        .filter_map(|imp| {
+            let K::Import { name, .. } = &imp.kind else { return None };
+            let name = match &name.kind {
+                K::MemberSelect { expr, name } if name == "*" => expr,
+                _ => name,
+            };
+            match &name.kind {
+                K::MemberSelect { name, .. } | K::Ident(name) => Some(name.as_str()),
+                _ => None,
+            }
+        })
+        .collect();
+    let mut used = HashSet::new();
+    if candidates.is_empty() {
+        return used;
+    }
+    fn walk(t: &Tree, candidates: &HashSet<&str>, used: &mut HashSet<String>) {
+        match &t.kind {
+            K::Import { .. } => {}
+            K::Ident(name) => {
+                if candidates.contains(name.as_str()) {
+                    used.insert(name.clone());
+                }
+            }
+            // The key of `@A(key = value)` names an annotation element.
+            K::Annotation { ty, args } => {
+                walk(ty, candidates, used);
+                for a in args {
+                    match &a.kind {
+                        K::Assign { op, lhs, rhs } if op == "=" && matches!(lhs.kind, K::Ident(_)) => {
+                            walk(rhs, candidates, used)
+                        }
+                        _ => walk(a, candidates, used),
+                    }
+                }
+            }
+            K::Method(m) => {
+                // A receiver parameter `Outer.this` refers to `Outer`.
+                if let Some(r) = &m.receiver
+                    && let Some((outer, _)) = r.name.split_once('.')
+                    && candidates.contains(outer)
+                {
+                    used.insert(outer.to_string());
+                }
+                t.for_each_child(&mut |c| walk(c, candidates, used));
+            }
+            _ => t.for_each_child(&mut |c| walk(c, candidates, used)),
+        }
+    }
+    walk(unit, &candidates, &mut used);
+    // Documentation comments, except inside import declarations.
+    let import_ranges: Vec<(usize, usize)> = imports.iter().map(|i| (i.start, i.end)).collect();
+    if let Ok((raw, _)) = crate::input::lex(source, false) {
+        for (kind, start, end) in raw {
+            if !matches!(kind, crate::input::RawKind::Comment)
+                || import_ranges.iter().any(|&(s, e)| s <= start && end <= e)
+            {
+                continue;
+            }
+            let text = &source[start..end];
+            if text.starts_with("/**") {
+                collect_javadoc_references(text, &mut used);
+            } else if text.starts_with("///") {
+                collect_javadoc_references(text, &mut used);
+                collect_markdown_references(text, &mut used);
+            }
+        }
+    }
+    used
 }
 
 /// An import declaration found by scanning tokens.
