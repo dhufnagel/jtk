@@ -172,17 +172,34 @@ fn apply_replacements(text: &str, replacements: &[Replacement]) -> String {
 }
 
 /// Deeply nested input (e.g. generated data files with thousands of concatenated strings) needs more stack than the
-/// main thread's default, so formatting runs on a thread with a large (lazily committed) stack.
+/// main thread's default, so formatting runs on a thread with a large (lazily committed) stack: the current one if it
+/// was started by [`spawn_with_large_stack`], else a new one.
 fn with_large_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    const STACK_SIZE: usize = 1 << 28;
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(STACK_SIZE)
-            .spawn_scoped(scope, f)
-            .expect("failed to spawn formatter thread")
-            .join()
-            .unwrap_or_else(|e| std::panic::resume_unwind(e))
-    })
+    if HAS_LARGE_STACK.get() {
+        return f();
+    }
+    std::thread::scope(|scope| spawn_with_large_stack(scope, f).join().unwrap_or_else(|e| std::panic::resume_unwind(e)))
+}
+
+const LARGE_STACK_SIZE: usize = 1 << 28;
+
+thread_local! {
+    static HAS_LARGE_STACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Spawns a scoped thread with a stack large enough for formatting, so that the formatting functions called on it
+/// need no thread of their own.
+pub fn spawn_with_large_stack<'scope, T: Send + 'scope>(
+    scope: &'scope std::thread::Scope<'scope, '_>,
+    f: impl FnOnce() -> T + Send + 'scope,
+) -> std::thread::ScopedJoinHandle<'scope, T> {
+    std::thread::Builder::new()
+        .stack_size(LARGE_STACK_SIZE)
+        .spawn_scoped(scope, || {
+            HAS_LARGE_STACK.set(true);
+            f()
+        })
+        .expect("failed to spawn formatter thread")
 }
 
 fn format_on_current_thread(

@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::config::{Configs, LintArguments, java_files};
 use crate::formatter::{
     FormatError, FormatOptions, fix_imports, format_and_lint, format_file, format_replacements_with_reflow,
+    spawn_with_large_stack,
 };
 use crate::lint::{self, Diagnostic, Selection, Settings};
 use crate::newlines;
@@ -499,15 +500,16 @@ fn read_inputs<'a>(files: &'a [String], err: &mut dyn Write) -> (Vec<(&'a str, S
 
 /// Applies `f` to each input on all cores; returns the results in input order.
 fn map_parallel<I: Sync, T: Send>(inputs: &[I], f: impl Fn(&I) -> T + Sync) -> Vec<T> {
+    // Even a single worker is a thread of its own: its large stack saves a thread per formatted file.
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(inputs.len());
-    if workers <= 1 {
-        return inputs.iter().map(&f).collect();
+    if workers == 0 {
+        return Vec::new();
     }
     let next = AtomicUsize::new(0);
     let mut results: Vec<(usize, T)> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
-                scope.spawn(|| {
+                spawn_with_large_stack(scope, || {
                     let mut done = Vec::new();
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);

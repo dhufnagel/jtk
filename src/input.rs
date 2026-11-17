@@ -273,11 +273,6 @@ fn lex_number(b: &[u8], mut i: usize) -> usize {
     i
 }
 
-fn update_column(column: usize, text: &str) -> usize {
-    let last = newlines::last_line_start(text);
-    if last > 0 { jlen(&text[last..]) } else { column + jlen(text) }
-}
-
 pub(crate) fn build_toks(text: &str) -> Result<Vec<Tok>, LexError> {
     build_toks_until(text, false)
 }
@@ -292,32 +287,11 @@ pub(crate) fn build_toks_until(text: &str, stop_at_type: bool) -> Result<Vec<Tok
     let mut column = 0;
     for (kind, start, end) in raw {
         let original = &text[start..end];
-        let (is_token, numbered, strings): (bool, bool, Vec<&str>) = match kind {
-            RawKind::Whitespace => {
-                let mut strings = Vec::new();
-                for line in newlines::lines(original) {
-                    if let Some(nl) = newlines::line_ending(line) {
-                        let spaces = &line[..line.len() - nl.len()];
-                        if !spaces.is_empty() {
-                            strings.push(spaces);
-                        }
-                        strings.push(&line[line.len() - nl.len()..]);
-                    } else if !line.is_empty() {
-                        strings.push(line);
-                    }
-                }
-                (false, false, strings)
-            }
-            RawKind::Comment => (false, true, vec![original]),
-            // Multi-character operators become one tok per character. Like the original, the column still
-            // advances by the whole operator's length per character; `argumentsAreTabular` depends on that.
-            RawKind::Token if original.len() > 1 && operator_len(original) == Some(original.len()) => {
-                (true, true, (0..original.len()).map(|i| &original[i..i + 1]).collect())
-            }
-            RawKind::Token => (true, true, vec![original]),
-        };
-        let mut pos = start;
-        for s in strings {
+        // After each of its toks, the column advances past the whole raw tok: to the length of its last line if it
+        // has line breaks, else by its length.
+        let last = newlines::last_line_start(original);
+        let (after_break, width) = if last > 0 { (Some(jlen(&original[last..])), 0) } else { (None, jlen(original)) };
+        let mut push = |s: &str, pos: usize, numbered: bool, is_token: bool| {
             let index = if numbered {
                 kn += 1;
                 kn - 1
@@ -325,8 +299,44 @@ pub(crate) fn build_toks_until(text: &str, stop_at_type: bool) -> Result<Vec<Tok
                 -1
             };
             toks.push(Tok { index, text: s.to_string(), position: pos, column, is_token });
-            pos += s.len();
-            column = update_column(column, original);
+            column = after_break.unwrap_or(column + width);
+        };
+        match kind {
+            RawKind::Whitespace => {
+                // One tok per run of spaces and one per line break.
+                let bytes = original.as_bytes();
+                let mut run = 0;
+                let mut i = 0;
+                while i < bytes.len() {
+                    let nl = match bytes[i] {
+                        b'\r' if bytes.get(i + 1) == Some(&b'\n') => 2,
+                        b'\n' | b'\r' => 1,
+                        _ => 0,
+                    };
+                    if nl == 0 {
+                        i += 1;
+                        continue;
+                    }
+                    if run < i {
+                        push(&original[run..i], start + run, false, false);
+                    }
+                    push(&original[i..i + nl], start + i, false, false);
+                    i += nl;
+                    run = i;
+                }
+                if run < bytes.len() {
+                    push(&original[run..], start + run, false, false);
+                }
+            }
+            RawKind::Comment => push(original, start, true, false),
+            // Multi-character operators become one tok per character. Like the original, the column still
+            // advances by the whole operator's length per character; `argumentsAreTabular` depends on that.
+            RawKind::Token if original.len() > 1 && operator_len(original) == Some(original.len()) => {
+                for i in 0..original.len() {
+                    push(&original[i..i + 1], start + i, true, true);
+                }
+            }
+            RawKind::Token => push(original, start, true, true),
         }
     }
     toks.push(Tok { index: kn, text: String::new(), position: end, column, is_token: true });
@@ -398,7 +408,9 @@ impl JavaInput {
     pub fn new(text: &str) -> Result<JavaInput, LexError> {
         let toks = build_toks(text)?;
         let kn = toks.last().unwrap().index;
-        let line_count = newlines::lines(text).len();
+        let line_starts = newlines::line_offsets(text);
+        // The number of non-empty lines, as `newlines::lines` counts them.
+        let line_count = line_starts.iter().filter(|&&start| start < text.len()).count();
         // computeRanges
         let mut ranges: Vec<Range> = Vec::new();
         let mut line_i = 0;
@@ -425,7 +437,7 @@ impl JavaInput {
             kn,
             ranges,
             line_count,
-            line_starts: newlines::line_offsets(text),
+            line_starts,
             position_tokens: Vec::new(),
             k_to_token: Vec::new(),
         };

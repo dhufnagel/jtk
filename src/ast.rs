@@ -378,24 +378,54 @@ fn is_comment(n: &Node) -> bool {
 }
 
 fn named_children<'t>(n: &Node<'t>) -> Vec<Node<'t>> {
-    let mut cursor = n.walk();
-    n.named_children(&mut cursor).filter(|c| !is_comment(c)).collect()
+    children_without_comments(n, true)
 }
 
 fn all_children<'t>(n: &Node<'t>) -> Vec<Node<'t>> {
-    let mut cursor = n.walk();
-    n.children(&mut cursor).filter(|c| !is_comment(c)).collect()
+    children_without_comments(n, false)
+}
+
+/// Looking a child up by index walks the preceding children, but needs no cursor (an allocation): used for nodes
+/// with few children.
+const FEW_CHILDREN: usize = 8;
+
+fn children_without_comments<'t>(n: &Node<'t>, named: bool) -> Vec<Node<'t>> {
+    let count = if named { n.named_child_count() } else { n.child_count() as usize };
+    let mut out = Vec::with_capacity(count);
+    if count <= FEW_CHILDREN {
+        for i in 0..count {
+            let c = if named { n.named_child(i as u32) } else { n.child(i as u32) };
+            out.extend(c.filter(|c| !is_comment(c)));
+        }
+    } else {
+        let mut cursor = n.walk();
+        if named {
+            out.extend(n.named_children(&mut cursor).filter(|c| !is_comment(c)));
+        } else {
+            out.extend(n.children(&mut cursor).filter(|c| !is_comment(c)));
+        }
+    }
+    out
 }
 
 /// Start of the first non-comment token of the node.
 fn start_of(n: &Node) -> usize {
-    let mut cursor = n.walk();
-    for c in n.children(&mut cursor) {
-        if !is_comment(&c) {
-            return start_of(&c);
+    let mut node = *n;
+    loop {
+        // Most first children are not comments; checking that needs no cursor.
+        let first = match node.child(0) {
+            None => return node.start_byte(),
+            Some(c) if !is_comment(&c) => Some(c),
+            Some(_) => {
+                let mut cursor = node.walk();
+                node.children(&mut cursor).find(|c| !is_comment(c))
+            }
+        };
+        match first {
+            Some(c) => node = c,
+            None => return node.start_byte(),
         }
     }
-    n.start_byte()
 }
 
 pub type ConvertError = crate::formatter::FormatError;

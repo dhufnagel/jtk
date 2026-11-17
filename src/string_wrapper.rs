@@ -29,8 +29,9 @@ pub fn wrap<E>(
     }
     let mut input = input.to_string();
     let mut replacements = reflow_replacements(column_limit, &input);
-    if replacements.is_empty() {
-        // Formatting an empty set of ranges changes nothing, so the passes below would be no-ops.
+    if replacements.iter().all(|(start, end, text)| input[*start..*end] == *text) {
+        // Nothing to change (often text blocks that are indented already). The passes below would only format the
+        // ranges of the input, which is formatted already, and so return it unchanged.
         return Ok(input);
     }
     let first_pass = format(&input, &ranges(&replacements))?;
