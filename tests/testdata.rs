@@ -16,6 +16,10 @@ fn first_diff(expected: &str, actual: &str) -> String {
     format!("line count differs: expected {}, actual {}", expected.lines().count(), actual.lines().count())
 }
 
+/// Inputs that javac's parser accepts but the tree-sitter grammar rejects. They are not valid Java: `this(...)` outside
+/// a constructor, and annotations mixing positional and named arguments.
+const KNOWN_FAILURES: &[&str] = &["B26952926", "B38352414", "palantir-expression-lambda-2"];
+
 #[test]
 fn testdata() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata");
@@ -31,8 +35,19 @@ fn testdata() {
     let mut passed = Vec::new();
     let mut failed = Vec::new();
     let mut idempotency = Vec::new();
+    let mut known = Vec::new();
     for name in &names {
         if only.as_deref().is_some_and(|o| o != name) {
+            continue;
+        }
+        if KNOWN_FAILURES.contains(&name.as_str()) {
+            let input = fs::read_to_string(dir.join(format!("{name}.input"))).unwrap();
+            match format_source(&input) {
+                Err(_) => known.push(name.clone()),
+                Ok(_) => {
+                    failed.push(format!("{name}: listed in KNOWN_FAILURES but formats now; remove it from the list"))
+                }
+            }
             continue;
         }
         let input = fs::read_to_string(dir.join(format!("{name}.input"))).unwrap();
@@ -74,7 +89,14 @@ fn testdata() {
     for f in &idempotency {
         println!("NOT IDEMPOTENT {f}");
     }
-    println!("\n{} passed, {} failed, {} idempotency failures", passed.len(), failed.len(), idempotency.len());
+    println!(
+        "\n{} passed, {} failed, {} idempotency failures, {} known failures ({})",
+        passed.len(),
+        failed.len(),
+        idempotency.len(),
+        known.len(),
+        known.join(", ")
+    );
     fs::write(dir.join("../passing.txt"), passed.join("\n") + "\n").ok();
     assert!(failed.is_empty() && idempotency.is_empty());
 }

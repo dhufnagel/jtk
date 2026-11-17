@@ -7,7 +7,9 @@ import { describe, it } from "node:test";
 /* eslint-disable @typescript-eslint/no-explicit-any */
 const Module = require("node:module") as any;
 
-const binary = process.env.JTK_BIN ?? path.join(__dirname, "..", "..", "..", "..", "target", "release", "jtk");
+const binary =
+  process.env.JTK_BIN ??
+  path.join(__dirname, "..", "..", "..", "..", "target", "release", process.platform === "win32" ? "jtk.exe" : "jtk");
 
 class Position {
   constructor(

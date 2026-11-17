@@ -1,2 +1,4 @@
 /target
 /tests/passing.txt
+/dist
+/binaries

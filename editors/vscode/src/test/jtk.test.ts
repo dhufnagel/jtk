@@ -14,7 +14,9 @@ import {
   resolveBinary,
 } from "../jtk";
 
-const binary = process.env.JTK_BIN ?? path.join(__dirname, "..", "..", "..", "..", "target", "release", "jtk");
+const binary =
+  process.env.JTK_BIN ??
+  path.join(__dirname, "..", "..", "..", "..", "target", "release", process.platform === "win32" ? "jtk.exe" : "jtk");
 const settings: FormatSettings = {
   sortImports: true,
   removeUnusedImports: true,
