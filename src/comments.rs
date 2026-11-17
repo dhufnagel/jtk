@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's JavaCommentsHelper.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! Port of `JavaCommentsHelper.java`: re-indents and wraps comments. Javadoc formatting is off in the Palantir style.
 
 use crate::input::Tok;

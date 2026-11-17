@@ -1,0 +1,23 @@
+jtk
+Copyright 2026 the jtk authors
+
+jtk is a Rust port of palantir-java-format
+(https://github.com/palantir/palantir-java-format), which is based on google-java-format
+(https://github.com/google/google-java-format). Both are licensed under the Apache License,
+Version 2.0, and so is jtk (see LICENSE).
+
+palantir-java-format: Copyright 2019-2025 Palantir Technologies Inc.
+google-java-format: Copyright 2015-2019 Google Inc.
+
+The formatter in src/ is a translation of palantir-java-format's Java sources into Rust. The
+translated files have been modified: they were ported to Rust, restructured, and adapted to a
+tree-sitter based parser instead of javac. Each of them names the original it was derived from.
+
+The test cases in tests/testdata, tests/imports and tests/javadoc are taken from
+palantir-java-format's test suite.
+
+jtk is not affiliated with or endorsed by Palantir Technologies Inc. or Google LLC.
+
+Binary distributions of jtk include third-party Rust crates under the MIT, Apache-2.0, MPL-2.0,
+Zlib and Unlicense licenses. Their license texts and the locations of their source code are
+listed in THIRD-PARTY-LICENSES.md, which is included in every release archive.

@@ -1,3 +1,7 @@
+// Derived from the doc package of palantir-java-format (Doc, Level, Break, State, ...)
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! The document model and the line-breaking algorithm (port of the `doc` package: `Doc`, `Level`, `Break`, `Token`,
 //! `Comment`, `NonBreakingSpace`, `State`, `DocBuilder` and friends).
 //!

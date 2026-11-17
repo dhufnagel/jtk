@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's JavaInputAstVisitor.java, Java14InputAstVisitor.java and Java21InputAstVisitor.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! Port of `JavaInputAstVisitor` (including the Java 14 and Java 21 extensions): walks the AST and emits ops.
 
 use std::collections::VecDeque;

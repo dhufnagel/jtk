@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's Formatter.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! Entry point tying the pipeline together (port of `Formatter.java`).
 
 use crate::ast::Converter;

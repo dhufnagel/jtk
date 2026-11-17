@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's Newlines.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! Platform-independent newline handling (port of `Newlines.java`).
 
 /// Returns the start offsets (in bytes) of all lines in the input. Always starts with 0.

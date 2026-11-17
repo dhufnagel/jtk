@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's JavaInput.java and JavacTokens.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! The formatter input: a lexed Java compilation unit (port of `JavaInput.java` and `JavacTokens.java`).
 //!
 //! The input is split into [`Tok`]s (tokens, comments, newlines and runs of blanks). Multi-character operators are

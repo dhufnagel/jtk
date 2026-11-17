@@ -1,3 +1,7 @@
+// Derived from the javadoc package of palantir-java-format (JavadocFormatter, JavadocLexer, JavadocWriter, ...)
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! Javadoc formatting (port of the original's `javadoc` package: `JavadocFormatter`, `JavadocLexer`,
 //! `JavadocWriter`, `Token`, `NestingCounter` and `CharStream`).
 //!

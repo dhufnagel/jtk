@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's StringWrapper.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! Port of `StringWrapper.java`: wraps string literals that exceed the column limit, and re-indents text blocks.
 //!
 //! The original re-formats only the replaced ranges; formatting the whole (already formatted) file is equivalent.

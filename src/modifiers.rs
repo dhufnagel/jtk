@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's ModifierOrderer.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! Port of `ModifierOrderer.java`: fixes sequences of modifiers to be in JLS order.
 
 use crate::input::JavaInput;

@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's JavaOutput.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! Port of `JavaOutput.java`: collects the output lines, re-inserting blank lines from the input where wanted, and
 //! computes the replacements that turn the input into the output for the requested token ranges.
 //!

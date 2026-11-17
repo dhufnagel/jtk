@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's ImportOrderer.java and RemoveUnusedImports.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! Import handling: ordering (port of `ImportOrderer.java`, Google/Palantir style) and removal of unused imports
 //! (port of `RemoveUnusedImports.java`).
 

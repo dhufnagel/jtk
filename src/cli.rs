@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's Main.java, CommandLineOptionsParser.java and FormatFileCallable.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! The command line interface, compatible with the original's `Main`, `CommandLineOptionsParser` and
 //! `FormatFileCallable`.
 //!

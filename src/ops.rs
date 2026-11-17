@@ -1,3 +1,7 @@
+// Derived from palantir-java-format's OpsBuilder.java
+// Copyright 2015-2019 Google Inc.; Copyright 2019-2025 Palantir Technologies Inc.
+// Modified by the jtk authors: ported to Rust. Licensed under the Apache License, Version 2.0.
+
 //! Port of `OpsBuilder.java`: builds the linear op stream and splices in comments.
 
 use std::collections::HashMap;
