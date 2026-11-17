@@ -1,0 +1,20 @@
+class UnnamedPatterns {
+    sealed interface Shape permits Circle, Square, Box {}
+
+    record Circle(Point center, int radius) implements Shape {}
+
+    record Square(Point corner, int side) implements Shape {}
+
+    record Box(Object content) implements Shape {}
+
+    int f(Shape shape) {
+        if (shape instanceof Circle(Point(_, var y), _)) {
+            return y;
+        }
+        return switch (shape) {
+            case Circle(var center, _) -> center.x();
+            case Square(Point(int x, _), _), Box(_) -> 0;
+            case Box(_) when shape.hashCode() > 0 -> 1;
+        };
+    }
+}

@@ -721,6 +721,10 @@ impl<'a> Visitor<'a> {
                 self.token(&var.name);
                 self.b.close();
             }
+            K::AnyPattern => {
+                self.sync(t.start);
+                self.token("_");
+            }
             K::RecordPattern { ty, nested } => {
                 self.scan(ty);
                 self.b.open(self.plus_four.clone());

@@ -299,6 +299,8 @@ pub enum K {
         ty: B,
         nested: Vec<Tree>,
     },
+    /// The unnamed pattern `_` (Java 22).
+    AnyPattern,
     DefaultCaseLabel,
     // Modules
     Module {
@@ -1266,8 +1268,11 @@ impl<'s> Converter<'s> {
             "record_pattern_component" => {
                 let mods = self.mods(n)?;
                 let ch: Vec<Node> = named_children(n).into_iter().filter(|c| c.kind() != "modifiers").collect();
+                if ch.len() == 1 && ch[0].kind() == "underscore_pattern" {
+                    return Ok(self.mk(n, K::AnyPattern));
+                }
                 if ch.len() == 1 {
-                    // `_` or a lone identifier
+                    // a lone identifier
                     let var = VarDecl {
                         start: start_of(n),
                         end: n.end_byte(),
