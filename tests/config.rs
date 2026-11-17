@@ -29,13 +29,15 @@ impl Drop for Dir {
     }
 }
 
-/// Runs the tool, returning (exit code, stdout with the directory's path removed, stderr).
+/// Runs the tool, returning (exit code, stdout with the directory's path removed and `/` as separator, stderr).
 fn jtk(dir: &Dir, args: &[&str]) -> (i32, String, String) {
     let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = run(&args, &mut "".as_bytes(), &mut out, &mut err);
-    let prefix = format!("{}/", dir.0.display());
+    let prefix = format!("{}{}", dir.0.display(), std::path::MAIN_SEPARATOR);
     let out = String::from_utf8(out).unwrap().replace(&prefix, "");
+    // Windows paths use `\`.
+    let out = if cfg!(windows) { out.replace('\\', "/") } else { out };
     (code, out, String::from_utf8(err).unwrap())
 }
 
