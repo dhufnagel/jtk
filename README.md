@@ -223,7 +223,7 @@ Linux, macOS and Windows for every push and pull request.
 packages the VS Code extension once per platform, and creates a draft GitHub release. To release:
 
 1. Set the version in `Cargo.toml` (and `editors/vscode/package.json`), commit, and push.
-2. Tag the commit: `git tag v0.2.0 && git push origin v0.2.0` (the tag must match the version in `Cargo.toml`).
+2. Tag the commit: `git tag v0.2.1 && git push origin v0.2.1` (the tag must match the version in `Cargo.toml`).
 3. Review the draft release on GitHub and publish it.
 
 Each archive contains the binary, `LICENSE`, `NOTICE`, `README.md` and `THIRD-PARTY-LICENSES.md` (the licenses of
