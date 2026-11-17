@@ -1,6 +1,6 @@
 [package]
 name = "jtk"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2024"
 description = "Java toolkit: a fast Java formatter, compatible with palantir-java-format"
 license = "Apache-2.0"
