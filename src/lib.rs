@@ -3,11 +3,14 @@
 pub mod ast;
 pub mod cli;
 pub mod comments;
+pub mod config;
 pub mod doc;
 pub mod formatter;
 pub mod imports;
 pub mod input;
 pub mod javadoc;
+pub mod lint;
+pub mod lsp;
 pub mod modifiers;
 pub mod newlines;
 pub mod ops;

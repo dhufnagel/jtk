@@ -37,7 +37,11 @@ The command line is compatible with the original's (`--help` lists all options):
 `--output-replacements`, `--version` and `@argfile`. Like the original, it formats, removes unused imports, sorts
 imports and reflows long strings, and processes files in parallel.
 
-An extension for Visual Studio Code is in [`editors/vscode`](editors/vscode).
+An extension for Visual Studio Code is in [`editors/vscode`](editors/vscode). It runs `jtk lsp`, a language server
+that other editors (IntelliJ with LSP4IJ, Neovim, Zed, ...) can use too: it reports the lint violations of open files,
+offers their fixes, suppression comments and `source.fixAll.jtk` as code actions, and formats documents and ranges.
+The nearest `jtk.toml` applies; the client's initialization options `sortImports`, `removeUnusedImports`,
+`reflowLongStrings`, `formatJavadoc` and `unsafeFixes` (all optional) set the rest.
 
 Differences from the original command line:
 
@@ -46,8 +50,118 @@ Differences from the original command line:
 - Syntax error messages come from this port's parser, not javac (same `file:line:column: error:` shape).
 - `--format-javadoc` is an addition: the original offers javadoc formatting only through its Java API (and plugins
   built on it), not on the command line.
+- `--config FILE` is an addition: the `[format]` settings of a `jtk.toml` (see [Configuration](#configuration)) apply,
+  from the given file or the nearest one in each file's directory or above.
 - As in the original, usage errors (unknown flags, missing files, conflicting options) print the usage and exit with
   status 0.
+
+## Linter (in development)
+
+```sh
+./target/release/jtk lint src                  # file:line:column: CODE message; exit 1 on violations, 2 on usage errors
+./target/release/jtk check src                 # CI: unformatted files and violations in one pass
+./target/release/jtk check -i src              # format in place, then lint the formatted files
+./target/release/jtk check --fix src           # apply automatic fixes, format in place, lint
+./target/release/jtk check --fix --unsafe-fixes src  # also apply the unsafe fixes (Eclipse save actions)
+```
+
+`jtk lint` checks what the formatter leaves alone. The rules come from Checkstyle, PMD, Error Prone and the Eclipse
+save actions; [docs/regel-analyse.md](docs/regel-analyse.md) lists them all. Without `--select`, the default set
+runs, chosen for few false alarms:
+
+| Codes | Rules |
+|---|---|
+| `B001`–`B004`, `B007`, `B009`–`B011`, `B014`–`B017`, `B019` | likely bugs: equals/hashCode, empty catch, fall-through, `==` on strings, null checks, ... |
+| `B026`, `B027` | unused local variables, private fields and methods |
+| `S001`–`S003`, `S006`–`S008` | simplifications: braces, boolean expressions, parentheses, semicolons, modifiers |
+| `M001`, `M004` | modernizations: `instanceof` patterns (Java 16), diamond operator (Java 7) |
+| `N001`–`N012` | naming conventions, with Checkstyle's default formats |
+
+The other rules are the remaining Checkstyle checks, with Checkstyle's default properties and limits, and PMD rules
+(B016–B019, B022, B028, S004, S005, S010, S019, A010, A011, C022) with PMD's defaults:
+
+| Codes | Rules |
+|---|---|
+| `I001`–`I005` | star, illegal and static imports, unnecessarily qualified types |
+| `B005`–`B034` | missing `default`, inner assignments, parameter assignment, illegal catch/throws, `clone`/`finalize`, ... |
+| `S009`–`S021` | annotation order, `super()`, explicit initialization, one declaration per line, array style, literal case, empty and nested blocks, block lambdas (most with fixes) |
+| `M002`–`M016` | switch expressions, `when` guards, unnamed variables (`_`), `final` parameters and locals, `@Deprecated`, `permits` |
+| `M006`, `M007`, `M009`, `M010`, `M012` | the remaining Eclipse save actions: `var`, enhanced `for`, text blocks, multi-catch, `final` fields |
+| `N013`, `N014` | abbreviations in names, illegal identifiers |
+| `A001`–`A017` | design: utility classes, final classes, visibility, overload order, magic numbers, file names, ... |
+| `C001`–`C022` | complexity and size: cyclomatic and cognitive complexity, lengths, counts, nesting depths, line length |
+
+Each module in `src/lint/` documents its rule. `scripts/compare-with-checkstyle.sh` compares the rules with their
+Checkstyle equivalents; on the Checkstyle test inputs, they report 99% of Checkstyle's violations on the same line.
+`scripts/compare-with-pmd.sh` does the same with PMD 7, on the code of PMD's rule tests
+(`scripts/extract-pmd-test-code.py`).
+
+`jtk lint` and `jtk check` take files and directories; in directories they check the `.java` files that no
+`.gitignore` file ignores.
+
+Options:
+
+- `--fix` applies automatic fixes (the S and M rules), leaving out fixes that could drop side effects;
+  `jtk lint --fix` writes the fixed files unformatted.
+- `--unsafe-fixes` with `--fix` also applies the unsafe fixes, which may change the behaviour in edge cases, as in
+  ruff: removing unused variables and private members (B026, B027), `"a".equals(s)` for `==` and literal-first
+  `equals` (B007, B008), `x == null` for `x.equals(null)` (B009), switch rules (M002), text blocks (M009) and
+  multi-catch (M010). Review their changes.
+- `--select` and `--ignore` take comma-separated code prefixes (`--select B,S001`); `--select ALL` checks all rules,
+  `--extend-select` adds rules to the selected or default set.
+- `--java VERSION` skips rules that suggest newer language features than the project's Java version.
+- `--config FILE` uses the given `jtk.toml` for all files.
+
+### Configuration
+
+The nearest `jtk.toml` in a file's directory or above applies to it; paths in it are relative to its directory.
+All keys are optional:
+
+```toml
+java = 17                          # as --java
+exclude = ["src/generated"]        # not checked when a directory is given (glob patterns, as in .gitignore)
+
+[format]                           # also for `jtk` without `check`; the command line can only switch steps off
+sort-imports = true
+remove-unused-imports = true
+reflow-long-strings = true
+format-javadoc = false
+
+[lint]
+select = ["ALL"]                   # as --select, which replaces it
+extend-select = ["C020"]           # --extend-select adds to it
+ignore = ["A015"]                  # --ignore adds to it
+
+[lint.per-file-ignores]
+"src/test/**" = ["B022", "C"]
+
+[lint.options]                     # rule parameters, named after Checkstyle's (PMD's for C022)
+C020 = { max = 120 }
+C001 = { max = 15 }
+```
+
+Rules with parameters, with their defaults:
+
+| Code | Parameters |
+|---|---|
+| `I002` | `illegal-pkgs = ["sun"]` |
+| `B020` | `illegal-class-names = ["Exception", "Error", "RuntimeException", "Throwable"]` |
+| `B021` | `illegal-class-names = ["Error", "RuntimeException", "Throwable"]` |
+| `N013` | `allowed-abbreviation-length = 3` |
+| `A014` | `allowed-distance = 3` |
+| `A015` | `ignore-numbers = [-1, 0, 1, 2]` |
+| `C004` | `method-maximum = 50`, `class-maximum = 1500`, `record-maximum = 150`, `file-maximum = 2000` |
+| `C022` | `report-level = 15` |
+| other `C` rules | `max`: C001 10, C003 3, C005 30, C006 150, C007 2000, C008 10, C009 20, C010 7, C011 8, C013 1, C014–C016 1, C020 80, C021 4 |
+
+Violations are suppressed by `// jtk:ignore` or `// jtk:ignore[S001]` on their line, and by
+`@SuppressWarnings("jtk:S001")` on an enclosing declaration. Existing Checkstyle and PMD suppressions apply to the
+equivalent rules: `@SuppressWarnings` with `"checkstyle:needbraces"`, `"NeedBraces"`, `"PMD.ControlStatementBraces"`,
+`"PMD"` or `"unused"`, and `// NOPMD`.
+
+`jtk check` lints each file on the formatter's thread, reusing the syntax tree of the formatted text. On the 646 files
+of commons-lang, `jtk lint` takes 2.4 s of CPU time with the default rules and 5.3 s with all rules; parsing alone
+takes 2.2 s.
 
 ## Tests
 

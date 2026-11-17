@@ -6,6 +6,10 @@ fn main() -> ExitCode {
     if args.first().is_some_and(|a| a == "--debug-tree") {
         return debug_tree();
     }
+    // The language server reads and writes stdin and stdout on its own threads, so they must not be locked here.
+    if args == ["lsp"] {
+        return ExitCode::from(jtk::lsp::run(&mut std::io::stderr()) as u8);
+    }
     let code = jtk::cli::run(
         &args,
         &mut std::io::stdin().lock(),

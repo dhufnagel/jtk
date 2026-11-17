@@ -9,9 +9,14 @@
 //! and diagnostics come from this port's parser rather than javac.
 
 use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::formatter::{FormatError, FormatOptions, fix_imports, format_file, format_replacements_with_reflow};
+use crate::config::{Configs, LintArguments, java_files};
+use crate::formatter::{
+    FormatError, FormatOptions, fix_imports, format_and_lint, format_file, format_replacements_with_reflow,
+};
+use crate::lint::{self, Diagnostic, Selection, Settings};
 use crate::newlines;
 use crate::output::Replacement;
 
@@ -43,6 +48,8 @@ Options:
     Do not reflow string literals that exceed the column limit.
   --format-javadoc
     Reflow javadoc comments (not done by default, as in the original's Palantir style).
+  --config
+    The jtk.toml whose [format] settings apply, instead of the nearest one in each file's directory or above.
   --dry-run, -n
     Prints the paths of the files whose contents would change if the formatter were run normally.
   --set-exit-if-changed
@@ -94,6 +101,7 @@ pub struct Options {
     pub set_exit_if_changed: bool,
     pub assume_filename: Option<String>,
     pub output_replacements: bool,
+    pub config: Option<String>,
 }
 
 impl Options {
@@ -216,6 +224,7 @@ pub fn parse(args: &[String]) -> Result<Options, UsageError> {
             "--set-exit-if-changed" => options.set_exit_if_changed = true,
             "-assume-filename" | "--assume-filename" => options.assume_filename = Some(value(&mut it)?),
             "-output-replacements" | "--output-replacements" => options.output_replacements = true,
+            "--config" => options.config = Some(value(&mut it)?),
             _ => return Err(UsageError(format!("unexpected flag: {flag}"))),
         }
     }
@@ -302,18 +311,23 @@ fn character_ranges(o: &Options, input: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
-/// Formats one input (port of `FormatFileCallable.call`).
-fn format_input(o: &Options, input: &str) -> Result<String, FormatError> {
-    let options = o.format_options();
+/// Formats one input (port of `FormatFileCallable.call`) with the formatting steps of its configuration.
+fn format_input(o: &Options, input: &str, options: &FormatOptions) -> Result<String, FormatError> {
     if o.fix_imports_only {
-        return fix_imports(input, &options);
+        return fix_imports(input, options);
     }
     let ranges = character_ranges(o, input);
     if o.output_replacements {
-        let replacements = format_replacements_with_reflow(input, &ranges, &options)?;
+        let replacements = format_replacements_with_reflow(input, &ranges, options)?;
         return Ok(replacements_json(input, &replacements));
     }
-    format_file(input, &ranges, &options)
+    format_file(input, &ranges, options)
+}
+
+/// The formatting steps for each file, from the command line and the files' configurations.
+fn format_options(o: &Options, files: &[&str]) -> Result<Vec<FormatOptions>, String> {
+    let mut configs = Configs::new(o.config.as_deref().map(Path::new))?;
+    files.iter().map(|file| Ok(configs.for_file(Path::new(file))?.format_options(o.format_options()))).collect()
 }
 
 /// Serializes replacements like the original (Jackson with Guava's `Range` serializer), with UTF-16 offsets.
@@ -357,6 +371,11 @@ fn json_string(s: &str) -> String {
 
 /// Runs the command line tool; returns the exit code.
 pub fn run(args: &[String], stdin: &mut dyn Read, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    match args.split_first().map(|(command, rest)| (command.as_str(), rest)) {
+        Some(("lint", files)) => return lint_files(files, out, err),
+        Some(("check", args)) => return check_files(args, out, err),
+        _ => {}
+    }
     let options = match parse(args).and_then(|o| validate(&o).map(|()| o)) {
         Ok(o) => o,
         Err(UsageError(message)) => {
@@ -383,7 +402,14 @@ fn format_stdin(o: &Options, stdin: &mut dyn Read, out: &mut dyn Write, err: &mu
         return 1;
     }
     let name = o.assume_filename.as_deref().unwrap_or(STDIN_FILENAME);
-    match format_input(o, &input) {
+    let options = match format_options(o, &[name]) {
+        Ok(options) => options[0],
+        Err(message) => {
+            let _ = writeln!(err, "{message}");
+            return 1;
+        }
+    };
+    match format_input(o, &input, &options) {
         Ok(output) => {
             let changed = output != input;
             if o.dry_run {
@@ -411,22 +437,17 @@ fn read_error_message(file: &str, e: &std::io::Error) -> String {
 }
 
 fn format_files(o: &Options, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let mut all_ok = true;
-    let mut inputs: Vec<(&str, String)> = Vec::new();
-    for file in &o.files {
-        if !file.ends_with(".java") {
-            let _ = writeln!(err, "Skipping non-Java file: {file}");
-            continue;
+    let (inputs, mut all_ok) = read_inputs(&o.files, err);
+    let files: Vec<&str> = inputs.iter().map(|(file, _)| *file).collect();
+    let options = match format_options(o, &files) {
+        Ok(options) => options,
+        Err(message) => {
+            let _ = writeln!(err, "{message}");
+            return 1;
         }
-        match std::fs::read_to_string(file) {
-            Ok(text) => inputs.push((file, text)),
-            Err(e) => {
-                let _ = writeln!(err, "{file}: could not read file: {}", read_error_message(file, &e));
-                all_ok = false;
-            }
-        }
-    }
-    let results = format_parallel(o, &inputs);
+    };
+    let jobs: Vec<_> = inputs.iter().zip(&options).collect();
+    let results = map_parallel(&jobs, |((_, text), options)| format_input(o, text, options));
     for ((file, input), result) in inputs.iter().zip(results) {
         let formatted = match result {
             Ok(formatted) => formatted,
@@ -456,29 +477,266 @@ fn format_files(o: &Options, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     if all_ok { 0 } else { 1 }
 }
 
-/// Formats the inputs on all available cores, returning the results in order.
-fn format_parallel(o: &Options, inputs: &[(&str, String)]) -> Vec<Result<String, FormatError>> {
+/// Reads the Java files, reporting unreadable and skipped files. Returns the inputs and whether all could be read.
+fn read_inputs<'a>(files: &'a [String], err: &mut dyn Write) -> (Vec<(&'a str, String)>, bool) {
+    let mut all_ok = true;
+    let mut inputs = Vec::new();
+    for file in files {
+        if !file.ends_with(".java") {
+            let _ = writeln!(err, "Skipping non-Java file: {file}");
+            continue;
+        }
+        match std::fs::read_to_string(file) {
+            Ok(text) => inputs.push((file.as_str(), text)),
+            Err(e) => {
+                let _ = writeln!(err, "{file}: could not read file: {}", read_error_message(file, &e));
+                all_ok = false;
+            }
+        }
+    }
+    (inputs, all_ok)
+}
+
+/// Applies `f` to each input on all cores; returns the results in input order.
+fn map_parallel<I: Sync, T: Send>(inputs: &[I], f: impl Fn(&I) -> T + Sync) -> Vec<T> {
     let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(inputs.len());
     if workers <= 1 {
-        return inputs.iter().map(|(_, text)| format_input(o, text)).collect();
+        return inputs.iter().map(&f).collect();
     }
     let next = AtomicUsize::new(0);
-    let mut results: Vec<(usize, Result<String, FormatError>)> = std::thread::scope(|scope| {
+    let mut results: Vec<(usize, T)> = std::thread::scope(|scope| {
         let handles: Vec<_> = (0..workers)
             .map(|_| {
                 scope.spawn(|| {
                     let mut done = Vec::new();
                     loop {
                         let i = next.fetch_add(1, Ordering::Relaxed);
-                        let Some((_, text)) = inputs.get(i) else { break };
-                        done.push((i, format_input(o, text)));
+                        let Some(input) = inputs.get(i) else { break };
+                        done.push((i, f(input)));
                     }
                     done
                 })
             })
             .collect();
-        handles.into_iter().flat_map(|h| h.join().expect("formatter worker panicked")).collect()
+        handles.into_iter().flat_map(|h| h.join().expect("worker panicked")).collect()
     });
     results.sort_by_key(|(i, _)| *i);
     results.into_iter().map(|(_, r)| r).collect()
+}
+
+const LINT_USAGE: &str = "Usage: jtk lint [options] path(s)
+
+Prints one line per rule violation: file:line:column: CODE message. Directories are searched for .java files.
+  --select CODES  Only check rules whose code starts with one of the comma-separated prefixes (e.g. B,S001),
+                  ALL for all rules. Without it, the configured or default rules are checked.
+  --extend-select CODES  Also check the rules matching the prefixes.
+  --ignore CODES  Do not check rules whose code starts with one of the prefixes.
+  --java VERSION  The project's Java version: skip rules that suggest newer language features.
+  --fix           Apply automatic fixes in place, and report the remaining violations.
+  --unsafe-fixes  With --fix, also apply the fixes that may change the behaviour in edge cases.
+  --config FILE   The jtk.toml to use instead of the nearest one in each file's directory or above.
+Exits with 1 if there are violations or errors, and with 2 on usage or configuration errors.";
+
+const CHECK_USAGE: &str = "Usage: jtk check [options] path(s)
+
+Formats and lints the files. Prints the files that are not formatted and one line per rule violation:
+file:line:column: CODE message. Directories are searched for .java files.
+  -i              Format the files in place and lint the formatted text.
+  --select CODES  Only check rules whose code starts with one of the comma-separated prefixes (e.g. B,S001),
+                  ALL for all rules. Without it, the configured or default rules are checked.
+  --extend-select CODES  Also check the rules matching the prefixes.
+  --ignore CODES  Do not check rules whose code starts with one of the prefixes.
+  --java VERSION  The project's Java version: skip rules that suggest newer language features.
+  --fix           Apply automatic fixes before formatting (implies -i).
+  --unsafe-fixes  With --fix, also apply the fixes that may change the behaviour in edge cases.
+  --config FILE   The jtk.toml to use instead of the nearest one in each file's directory or above.
+Exits with 1 if a file is not formatted (without -i), has violations or errors, and with 2 on usage or
+configuration errors.";
+
+/// Options of `jtk lint` and `jtk check`.
+struct LintOptions {
+    paths: Vec<String>,
+    in_place: bool,
+    fix: bool,
+    unsafe_fixes: bool,
+    arguments: LintArguments,
+    config: Option<String>,
+}
+
+fn parse_lint_options(args: &[String], allow_in_place: bool) -> Result<LintOptions, String> {
+    let mut paths = Vec::new();
+    let mut in_place = false;
+    let mut fix = false;
+    let mut unsafe_fixes = false;
+    let mut arguments = LintArguments::default();
+    let mut config = None;
+    let mut it = args.iter();
+    while let Some(arg) = it.next() {
+        match arg.as_str() {
+            "-i" if allow_in_place => in_place = true,
+            "--fix" => fix = true,
+            "--unsafe-fixes" => unsafe_fixes = true,
+            "--select" => arguments.select.extend(rule_codes(it.next())?),
+            "--extend-select" => arguments.extend_select.extend(rule_codes(it.next())?),
+            "--ignore" => arguments.ignore.extend(rule_codes(it.next())?),
+            "--java" => arguments.java = Some(parse_java_version(it.next())?),
+            "--config" => config = Some(it.next().ok_or("missing configuration file")?.clone()),
+            flag if flag.starts_with('-') => return Err(format!("unknown option: {flag}")),
+            path => paths.push(path.to_string()),
+        }
+    }
+    if paths.is_empty() {
+        return Err("no files given".to_string());
+    }
+    Selection::new(arguments.select.clone(), arguments.ignore.clone())?.extended(arguments.extend_select.clone())?;
+    let in_place = in_place || (fix && allow_in_place);
+    Ok(LintOptions { paths, in_place, fix, unsafe_fixes, arguments, config })
+}
+
+/// `17`, or `1.8` for 8.
+fn parse_java_version(arg: Option<&String>) -> Result<u32, String> {
+    let arg = arg.ok_or("missing Java version")?;
+    let version = arg.strip_prefix("1.").unwrap_or(arg);
+    version.parse().map_err(|_| format!("invalid Java version: {arg}"))
+}
+
+fn rule_codes(arg: Option<&String>) -> Result<Vec<String>, String> {
+    let arg = arg.ok_or("missing rule codes")?;
+    Ok(arg.split(',').map(str::trim).filter(|c| !c.is_empty()).map(str::to_string).collect())
+}
+
+/// A file to lint, with its text and the settings of its configuration.
+struct LintJob {
+    file: String,
+    text: String,
+    settings: Settings,
+    format: FormatOptions,
+}
+
+/// The files to lint: reads the files given and found in the directories given, and finds their configurations.
+/// Returns them and whether all files could be read, or a configuration error.
+fn lint_jobs(o: &LintOptions, err: &mut dyn Write) -> Result<(Vec<LintJob>, bool), String> {
+    let mut configs = Configs::new(o.config.as_deref().map(Path::new))?;
+    let files = java_files(&o.paths, &mut configs)?;
+    let (inputs, all_ok) = read_inputs(&files, err);
+    let mut jobs = Vec::with_capacity(inputs.len());
+    for (file, text) in inputs {
+        let config = configs.for_file(Path::new(file))?;
+        let settings = config.lint_settings(Path::new(file), &o.arguments)?;
+        let format = config.format_options(FormatOptions::default());
+        jobs.push(LintJob { file: file.to_string(), text, settings, format });
+    }
+    Ok((jobs, all_ok))
+}
+
+/// Parses the options and prepares the files of `jtk lint` or `jtk check`, or prints the usage or configuration
+/// error and returns the exit code.
+fn prepare(args: &[String], check: bool, err: &mut dyn Write) -> Result<(LintOptions, Vec<LintJob>, bool), i32> {
+    let o = parse_lint_options(args, check).map_err(|message| {
+        let usage = if check { CHECK_USAGE } else { LINT_USAGE };
+        let _ = writeln!(err, "{message}\n\n{usage}");
+        2
+    })?;
+    let (jobs, all_ok) = lint_jobs(&o, err).map_err(|message| {
+        let _ = writeln!(err, "{message}");
+        2
+    })?;
+    Ok((o, jobs, all_ok))
+}
+
+/// `jtk lint`: reports the rule violations in the given files.
+fn lint_files(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let (o, jobs, mut all_ok) = match prepare(args, false, err) {
+        Ok(prepared) => prepared,
+        Err(code) => return code,
+    };
+    let results = map_parallel(&jobs, |job| lint_input(job, &o));
+    for (job, result) in jobs.iter().zip(results) {
+        let file = &job.file;
+        match result {
+            Ok((text, diagnostics)) => {
+                if text != job.text
+                    && let Err(e) = std::fs::write(file, &text)
+                {
+                    let _ = writeln!(err, "{file}: could not write file: {e}");
+                    all_ok = false;
+                }
+                all_ok &= report_violations(file, &text, &diagnostics, out);
+            }
+            Err(e) => {
+                let _ = writeln!(err, "{file}:{e}");
+                all_ok = false;
+            }
+        }
+    }
+    if all_ok { 0 } else { 1 }
+}
+
+/// Returns the (with `--fix`, fixed) text and its violations.
+fn lint_input(job: &LintJob, o: &LintOptions) -> Result<(String, Vec<Diagnostic>), FormatError> {
+    let input = &job.text;
+    let text = if o.fix { lint::fix_with(input, &job.settings, o.unsafe_fixes)? } else { input.clone() };
+    let diagnostics = lint::lint_file(&text, Some(Path::new(&job.file)), &job.settings)?;
+    Ok((text, diagnostics))
+}
+
+/// `jtk check`: formats and lints the given files in one pass.
+fn check_files(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let (o, jobs, mut all_ok) = match prepare(args, true, err) {
+        Ok(prepared) => prepared,
+        Err(code) => return code,
+    };
+    let results = map_parallel(&jobs, |job| check_input(job, &o));
+    for (job, result) in jobs.iter().zip(results) {
+        let (file, input) = (&job.file, &job.text);
+        let (formatted, diagnostics) = match result {
+            Ok(checked) => checked,
+            Err(e) => {
+                let _ = writeln!(err, "{file}:{e}");
+                all_ok = false;
+                continue;
+            }
+        };
+        let changed = formatted != *input;
+        if changed && o.in_place {
+            if let Err(e) = std::fs::write(file, &formatted) {
+                let _ = writeln!(err, "{file}: could not write file: {e}");
+                all_ok = false;
+            }
+        } else if changed {
+            let _ = writeln!(out, "{file}: not formatted");
+            all_ok = false;
+        }
+        let on_disk = if o.in_place { &formatted } else { input };
+        all_ok &= report_violations(file, on_disk, &diagnostics, out);
+    }
+    if all_ok { 0 } else { 1 }
+}
+
+/// Formats the input and lints the text that is on disk afterwards, so that positions match the file. Linting the
+/// formatted text reuses the formatter's syntax tree; an unformatted input left unchanged needs its own parse.
+fn check_input(job: &LintJob, o: &LintOptions) -> Result<(String, Vec<Diagnostic>), FormatError> {
+    let input = &job.text;
+    let fixed = if o.fix { lint::fix_with(input, &job.settings, o.unsafe_fixes)? } else { input.clone() };
+    let path = Some(Path::new(&job.file));
+    let (formatted, diagnostics) = format_and_lint(&fixed, path, &job.format, &job.settings)?;
+    if o.in_place || formatted == *input {
+        return Ok((formatted, diagnostics));
+    }
+    Ok((formatted, lint::lint_file(input, path, &job.settings)?))
+}
+
+/// Prints the violations as `file:line:column: CODE message`; returns whether there were none.
+/// The diagnostics are ordered by position, so lines are counted from the previous one rather than from the start.
+fn report_violations(file: &str, text: &str, diagnostics: &[Diagnostic], out: &mut dyn Write) -> bool {
+    let (mut counted_to, mut lines_before) = (0, 0);
+    for d in diagnostics {
+        let (line_in_rest, column) = newlines::line_column(&text[counted_to..], d.offset - counted_to);
+        let line = lines_before + line_in_rest;
+        let line_start = text[..d.offset].rfind(['\n', '\r']).map_or(0, |i| i + 1).max(counted_to);
+        lines_before = line - 1;
+        counted_to = line_start;
+        let _ = writeln!(out, "{file}:{line}:{column}: {} {}", d.rule.code(), d.message);
+    }
+    diagnostics.is_empty()
 }

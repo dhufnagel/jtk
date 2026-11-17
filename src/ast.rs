@@ -1731,7 +1731,7 @@ impl<'s> Converter<'s> {
 }
 
 /// The first error or missing node in the tree.
-fn first_error<'t>(n: &Node<'t>) -> Node<'t> {
+pub(crate) fn first_error<'t>(n: &Node<'t>) -> Node<'t> {
     if n.is_error() || n.is_missing() {
         return *n;
     }

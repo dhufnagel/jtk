@@ -1,7 +1,7 @@
 {
   "name": "jtk",
-  "displayName": "jtk – Java formatter",
-  "description": "Fast Java formatter, compatible with palantir-java-format (same output, no JVM).",
+  "displayName": "jtk – Java formatter and linter",
+  "description": "Fast Java formatter, compatible with palantir-java-format (same output, no JVM), and linter with fixes.",
   "version": "0.1.0",
   "publisher": "dhufnagel",
   "license": "Apache-2.0",
@@ -14,12 +14,16 @@
     "vscode": "^1.90.0"
   },
   "categories": [
-    "Formatters"
+    "Formatters",
+    "Linters"
   ],
   "keywords": [
     "java",
     "formatter",
-    "palantir-java-format"
+    "linter",
+    "palantir-java-format",
+    "checkstyle",
+    "pmd"
   ],
   "extensionKind": [
     "workspace"
@@ -33,6 +37,10 @@
       {
         "command": "jtk.showOutput",
         "title": "jtk: Show Output"
+      },
+      {
+        "command": "jtk.restart",
+        "title": "jtk: Restart Server"
       }
     ],
     "configuration": {
@@ -47,7 +55,7 @@
         "jtk.sortImports": {
           "type": "boolean",
           "default": true,
-          "description": "Sort imports when formatting a whole document."
+          "description": "Sort imports when formatting a whole document (unless jtk.toml switches it off)."
         },
         "jtk.removeUnusedImports": {
           "type": "boolean",
@@ -64,11 +72,10 @@
           "default": false,
           "description": "Reflow javadoc comments (off by default, as in palantir-java-format)."
         },
-        "jtk.timeout": {
-          "type": "number",
-          "default": 10000,
-          "minimum": 1000,
-          "description": "Maximum time in milliseconds to wait for jtk to format a document."
+        "jtk.unsafeFixes": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Also apply the unsafe fixes, which may change the behaviour in edge cases, in **Fix all jtk violations** (`source.fixAll.jtk`, for example on save)."
         }
       }
     }
@@ -85,5 +92,8 @@
     "@types/vscode": "~1.90.0",
     "@vscode/vsce": "^3.0.0",
     "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
   }
 }

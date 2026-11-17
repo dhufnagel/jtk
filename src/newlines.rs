@@ -112,6 +112,13 @@ pub fn lines(input: &str) -> Vec<&str> {
     result
 }
 
+/// The 1-based line and column of a byte offset, with the column in UTF-16 units like javac's diagnostics.
+pub fn line_column(text: &str, offset: usize) -> (usize, usize) {
+    let offset = offset.min(text.len());
+    let line_start = text[..offset].rfind(['\n', '\r']).map_or(0, |i| i + 1);
+    (count(&text[..line_start]) + 1, jlen(&text[line_start..offset]) + 1)
+}
+
 /// Java's `String.length()`: the number of UTF-16 code units.
 pub fn jlen(s: &str) -> usize {
     if s.is_ascii() { s.len() } else { s.encode_utf16().count() }

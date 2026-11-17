@@ -163,7 +163,7 @@ fn lex(text: &str, stop_at_type: bool) -> Result<(Vec<RawTok>, Option<usize>), L
                     i += 2;
                     continue;
                 }
-                if text[i..].starts_with("\"\"\"") {
+                if bytes[i..].starts_with(b"\"\"\"") {
                     i += 3;
                     break;
                 }

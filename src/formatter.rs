@@ -8,6 +8,7 @@ use crate::ast::Converter;
 use crate::comments::CommentsHelper;
 use crate::doc::{Docs, Layout, State};
 use crate::input::JavaInput;
+use crate::lint::{self, Diagnostic, Settings};
 use crate::ops::OpsBuilder;
 use crate::output::{JavaOutput, Replacement};
 use crate::visitor::Visitor;
@@ -45,10 +46,8 @@ impl FormatError {
 
     /// An error at a byte offset of `text`.
     pub fn at_offset(text: &str, offset: usize, message: impl Into<String>) -> FormatError {
-        let offset = offset.min(text.len());
-        let line_start = text[..offset].rfind(['\n', '\r']).map_or(0, |i| i + 1);
-        let line = crate::newlines::count(&text[..line_start]) + 1;
-        FormatError::at(line, crate::newlines::jlen(&text[line_start..offset]) + 1, message)
+        let (line, column) = crate::newlines::line_column(text, offset);
+        FormatError::at(line, column, message)
     }
 }
 
@@ -91,6 +90,21 @@ impl Default for FormatOptions {
 /// imports, and reflow long string literals (each step except formatting can be switched off).
 pub fn format(text: &str, options: &FormatOptions) -> Result<String, FormatError> {
     format_file(text, &[(0, text.len())], options)
+}
+
+/// Formats like [`format`] and lints the result on the same thread, so that the linter reuses the syntax tree the
+/// formatter parsed last (the formatted text, unless long strings were reflowed).
+pub fn format_and_lint(
+    text: &str,
+    path: Option<&std::path::Path>,
+    options: &FormatOptions,
+    settings: &Settings,
+) -> Result<(String, Vec<Diagnostic>), FormatError> {
+    with_large_stack(|| {
+        let formatted = format_on_current_thread(text, &[(0, text.len())], options)?;
+        let diagnostics = lint::lint_file(&formatted, path, settings)?;
+        Ok((formatted, diagnostics))
+    })
 }
 
 /// Like [`format`], but only formats the given byte ranges (extended to whole statements or declarations). As in

@@ -171,3 +171,9 @@ fn files_after_the_first_file_are_all_files() {
     let (code, out, err) = pjf(&[&d.path("a.java"), "-i"], "");
     assert_eq!((code, out.as_str(), err.as_str()), (0, FORMATTED, "Skipping non-Java file: -i\n"));
 }
+
+#[test]
+fn text_block_with_non_ascii_text() {
+    let source = "class U {\n    String e = \"\"\"\n        \u{e4} x\n        \"\"\";\n}\n";
+    assert_eq!(pjf(&["-"], source), (0, source.into(), String::new()));
+}
