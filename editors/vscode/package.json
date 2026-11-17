@@ -2,7 +2,7 @@
   "name": "jtk",
   "displayName": "jtk – Java formatter and linter",
   "description": "Fast Java formatter, compatible with palantir-java-format (same output, no JVM), and linter with fixes.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "buchner-org",
   "license": "Apache-2.0",
   "repository": {
