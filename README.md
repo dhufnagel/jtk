@@ -159,9 +159,9 @@ Violations are suppressed by `// jtk:ignore` or `// jtk:ignore[S001]` on their l
 equivalent rules: `@SuppressWarnings` with `"checkstyle:needbraces"`, `"NeedBraces"`, `"PMD.ControlStatementBraces"`,
 `"PMD"` or `"unused"`, and `// NOPMD`.
 
-`jtk check` lints each file on the formatter's thread, reusing the syntax tree of the formatted text. On the 646 files
-of commons-lang, `jtk lint` takes 2.4 s of CPU time with the default rules and 5.3 s with all rules; parsing alone
-takes 2.2 s.
+`jtk check` lints each file on the formatter's thread, reusing the syntax tree of the formatted text. With the rules
+that Checkstyle and PMD also have, `jtk lint` is 17 to 23 times faster than Checkstyle and 2.6 to 16 times faster than
+PMD ([docs/benchmark.md](docs/benchmark.md)).
 
 ## Tests
 
@@ -210,9 +210,9 @@ Javadoc formatting (`--format-javadoc`, which the original only offers through i
 `Formatter.formatSource`. It changes 1,302 of the 1,456 files in `java.base` and other modules that the smaller
 comparisons use. The upstream `JavadocFormattingTest` cases are in `tests/javadoc`.
 
-Performance on the same JDK sources (one command per tool, which formats files in parallel on all cores): 11 s for
-this port, 107 s for the original native image. On a single core, 1,456 files from `java.base` and others take 6.9 s
-(`scripts/bench.sh`).
+Performance on the same JDK sources (one command per tool, which formats files in parallel on all cores): 12 s for
+this port, 244 s for the original native image ([docs/benchmark.md](docs/benchmark.md), `scripts/bench-tools.sh`). On a
+single core, 1,456 files from `java.base` and others take 6.9 s (`scripts/bench.sh`).
 
 ## Continuous integration and releases
 
