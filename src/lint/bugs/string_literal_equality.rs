@@ -5,7 +5,7 @@
 //! that a null operand gives `false` as before. It changes the result where identity was meant (interned strings).
 
 use crate::ast::{K, LitKind, Tree};
-use crate::lint::tree::{Context, first_token, has_comment};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
@@ -13,12 +13,11 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
     if !matches!(op.as_str(), "==" | "!=") || !is_string(left) && !is_string(right) {
         return;
     }
-    let text = context.text;
-    let operator = first_token(text, left.end..right.start).map_or(tree.start, |o| o.start);
+    let operator = context.tokens().in_range(left.end..right.start).next().map_or(tree.start, |o| o.start);
     let message = "String literal compared with == or != instead of equals()";
     let diagnostic = Diagnostic::new(Rule::StringLiteralEquality, operator, message);
     // Comments between the operands would be lost.
-    if has_comment(text, left.end..right.start) {
+    if context.tokens().has_comment(left.end..right.start) {
         diagnostics.push(diagnostic);
         return;
     }

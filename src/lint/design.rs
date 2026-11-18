@@ -20,6 +20,9 @@ use tree_sitter::Node;
 use super::syntax::{is_comment, modifiers, named_children, source};
 use super::{Check, ConfiguredCheck, FileCheck, Rule};
 
+/// The checks on the AST, with the kinds of trees each checks.
+pub(super) const TREE_CHECKS: &[(Rule, &[crate::ast::Tag], super::tree::TreeCheck)] = &[];
+
 pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
     (Rule::UtilityClassConstructor, &["class_declaration"], utility_class_constructor::check),
     (Rule::FinalClass, &["class_declaration"], final_class::check),

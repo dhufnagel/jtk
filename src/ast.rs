@@ -67,6 +67,8 @@ pub struct ClassDecl {
     pub record_components: Vec<VarDecl>,
     pub enum_constants: Vec<EnumConstant>,
     pub members: Vec<Tree>,
+    /// The offset of the name.
+    pub name_pos: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -75,6 +77,8 @@ pub struct EnumConstant {
     pub name: String,
     pub args: Vec<Tree>,
     pub body: Option<Vec<Tree>>,
+    /// The offset of the name.
+    pub name_pos: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -92,6 +96,8 @@ pub struct MethodDecl {
     pub body: Option<B>,
     pub default_value: Option<B>,
     pub compact_ctor: bool,
+    /// The offset of the name.
+    pub name_pos: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -323,6 +329,138 @@ pub enum K {
     Uses {
         name: B,
     },
+}
+
+/// The variant of a [`K`], without its data: for dispatching on the kind of tree.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tag {
+    CompilationUnit,
+    Import,
+    Class,
+    Method,
+    Vars,
+    Block,
+    Empty,
+    ExprStmt,
+    If,
+    While,
+    DoWhile,
+    For,
+    ForEach,
+    Labeled,
+    Switch,
+    Try,
+    Throw,
+    Return,
+    Break,
+    Continue,
+    Synchronized,
+    Assert,
+    Yield,
+    Var,
+    Ident,
+    MemberSelect,
+    MethodInvocation,
+    ArrayAccess,
+    Literal,
+    Binary,
+    Unary,
+    Assign,
+    Conditional,
+    InstanceOf,
+    Cast,
+    Parens,
+    NewClass,
+    NewArray,
+    Lambda,
+    MemberRef,
+    SwitchExpr,
+    Primitive,
+    ArrayType,
+    Parameterized,
+    Wildcard,
+    Annotated,
+    Union,
+    Intersection,
+    Annotation,
+    TypeParameter,
+    BindingPattern,
+    RecordPattern,
+    AnyPattern,
+    DefaultCaseLabel,
+    Module,
+    Directive,
+    Requires,
+    Uses,
+}
+
+impl Tag {
+    pub const COUNT: usize = Tag::Uses as usize + 1;
+}
+
+impl Tree {
+    pub fn tag(&self) -> Tag {
+        match self.kind {
+            K::CompilationUnit { .. } => Tag::CompilationUnit,
+            K::Import { .. } => Tag::Import,
+            K::Class { .. } => Tag::Class,
+            K::Method { .. } => Tag::Method,
+            K::Vars { .. } => Tag::Vars,
+            K::Block { .. } => Tag::Block,
+            K::Empty => Tag::Empty,
+            K::ExprStmt { .. } => Tag::ExprStmt,
+            K::If { .. } => Tag::If,
+            K::While { .. } => Tag::While,
+            K::DoWhile { .. } => Tag::DoWhile,
+            K::For { .. } => Tag::For,
+            K::ForEach { .. } => Tag::ForEach,
+            K::Labeled { .. } => Tag::Labeled,
+            K::Switch { .. } => Tag::Switch,
+            K::Try { .. } => Tag::Try,
+            K::Throw { .. } => Tag::Throw,
+            K::Return { .. } => Tag::Return,
+            K::Break { .. } => Tag::Break,
+            K::Continue { .. } => Tag::Continue,
+            K::Synchronized { .. } => Tag::Synchronized,
+            K::Assert { .. } => Tag::Assert,
+            K::Yield { .. } => Tag::Yield,
+            K::Var { .. } => Tag::Var,
+            K::Ident { .. } => Tag::Ident,
+            K::MemberSelect { .. } => Tag::MemberSelect,
+            K::MethodInvocation { .. } => Tag::MethodInvocation,
+            K::ArrayAccess { .. } => Tag::ArrayAccess,
+            K::Literal { .. } => Tag::Literal,
+            K::Binary { .. } => Tag::Binary,
+            K::Unary { .. } => Tag::Unary,
+            K::Assign { .. } => Tag::Assign,
+            K::Conditional { .. } => Tag::Conditional,
+            K::InstanceOf { .. } => Tag::InstanceOf,
+            K::Cast { .. } => Tag::Cast,
+            K::Parens { .. } => Tag::Parens,
+            K::NewClass { .. } => Tag::NewClass,
+            K::NewArray { .. } => Tag::NewArray,
+            K::Lambda { .. } => Tag::Lambda,
+            K::MemberRef { .. } => Tag::MemberRef,
+            K::SwitchExpr { .. } => Tag::SwitchExpr,
+            K::Primitive { .. } => Tag::Primitive,
+            K::ArrayType { .. } => Tag::ArrayType,
+            K::Parameterized { .. } => Tag::Parameterized,
+            K::Wildcard { .. } => Tag::Wildcard,
+            K::Annotated { .. } => Tag::Annotated,
+            K::Union { .. } => Tag::Union,
+            K::Intersection { .. } => Tag::Intersection,
+            K::Annotation { .. } => Tag::Annotation,
+            K::TypeParameter { .. } => Tag::TypeParameter,
+            K::BindingPattern { .. } => Tag::BindingPattern,
+            K::RecordPattern { .. } => Tag::RecordPattern,
+            K::AnyPattern => Tag::AnyPattern,
+            K::DefaultCaseLabel => Tag::DefaultCaseLabel,
+            K::Module { .. } => Tag::Module,
+            K::Directive { .. } => Tag::Directive,
+            K::Requires { .. } => Tag::Requires,
+            K::Uses { .. } => Tag::Uses,
+        }
+    }
 }
 
 impl Tree {
@@ -855,7 +993,9 @@ impl<'s> Converter<'s> {
             _ => ClassKind::Record,
         };
         let mods = self.mods(n)?;
-        let name = self.text(&field(n, "name")?).to_string();
+        let name_node = field(n, "name")?;
+        let name_pos = name_node.start_byte();
+        let name = self.text(&name_node).to_string();
         let type_params = match child_by_field(n, "type_parameters") {
             Some(tp) => named_children(&tp).iter().map(|t| self.type_parameter(t)).collect::<R<_>>()?,
             None => vec![],
@@ -914,13 +1054,16 @@ impl<'s> Converter<'s> {
                 record_components,
                 enum_constants,
                 members,
+                name_pos,
             })),
         ))
     }
 
     fn enum_constant(&self, n: &Node) -> R<EnumConstant> {
         let mods = self.mods(n)?;
-        let name = self.text(&field(n, "name")?).to_string();
+        let name_node = field(n, "name")?;
+        let name_pos = name_node.start_byte();
+        let name = self.text(&name_node).to_string();
         let args = match child_by_field(n, "arguments") {
             Some(a) => self.args(&a)?,
             None => vec![],
@@ -929,7 +1072,7 @@ impl<'s> Converter<'s> {
             Some(b) => Some(named_children(&b).iter().map(|m| self.declaration(m)).collect::<R<_>>()?),
             None => None,
         };
-        Ok(EnumConstant { mods, name, args, body })
+        Ok(EnumConstant { mods, name, args, body, name_pos })
     }
 
     fn args(&self, n: &Node) -> R<Vec<Tree>> {
@@ -977,7 +1120,9 @@ impl<'s> Converter<'s> {
                 None => None,
             };
         }
-        let name = self.text(&field(n, "name")?).to_string();
+        let name_node = field(n, "name")?;
+        let name_pos = name_node.start_byte();
+        let name = self.text(&name_node).to_string();
         let mut params = Vec::new();
         let mut receiver = None;
         if let Some(ps) = child_by_field(n, "parameters") {
@@ -1019,6 +1164,7 @@ impl<'s> Converter<'s> {
                 body,
                 default_value,
                 compact_ctor: n.kind() == "compact_constructor_declaration",
+                name_pos,
             })),
         ))
     }

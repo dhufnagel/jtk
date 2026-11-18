@@ -10,7 +10,7 @@ use std::ops::Range;
 
 use crate::ast::{CaseKind, ClassKind, K, LitKind, Tree, VarDecl};
 use crate::lint::syntax::span_removal_range;
-use crate::lint::tree::{Context, has_comment, in_type, path_to, strip_parens};
+use crate::lint::tree::{Context, in_type, path_to, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
 
 /// Where a variable is visible: a range of the source below a tree.
@@ -63,7 +63,7 @@ pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Di
 fn removal(declaration: &Tree, var: &VarDecl, context: &Context) -> Option<Edit> {
     let K::Vars(declarators) = &declaration.kind else { return None };
     let text = context.text;
-    if has_comment(text, declaration.start..declaration.end) {
+    if context.tokens().has_comment(declaration.start..declaration.end) {
         return None;
     }
     let in_statement_list =

@@ -2,7 +2,7 @@
 //! can be `return c;`. Fixed when the two literals differ.
 
 use crate::ast::{K, Tree};
-use crate::lint::tree::{Context, has_comment, is_boolean_literal, negation, strip_parens};
+use crate::lint::tree::{Context, is_boolean_literal, negation, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
@@ -40,7 +40,7 @@ fn returned_literal<'t>(statement: &'t Tree, context: &Context<'t>) -> Option<(&
         _ => return None,
     };
     // tree-sitter takes a comment before the value for the value.
-    if has_comment(context.text, statement.start..value.start) {
+    if context.tokens().has_comment(statement.start..value.start) {
         return None;
     }
     let value = strip_parens(value);

@@ -25,6 +25,12 @@ use tree_sitter::Node;
 
 use super::{Check, Edit, Rule, syntax};
 
+use crate::ast::Tag;
+
+/// The checks on the AST, with the kinds of trees each checks.
+pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] =
+    &[(Rule::SimplifyBooleanReturn, &[Tag::If], simplify_boolean_return::check)];
+
 pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
     (
         Rule::MissingBraces,

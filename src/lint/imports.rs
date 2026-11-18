@@ -10,6 +10,9 @@ use tree_sitter::Node;
 use super::syntax::source;
 use super::{Check, ConfiguredCheck, Rule};
 
+/// The checks on the AST, with the kinds of trees each checks.
+pub(super) const TREE_CHECKS: &[(Rule, &[crate::ast::Tag], super::tree::TreeCheck)] = &[];
+
 pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
     (Rule::StarImport, &["import_declaration"], star_import::check),
     (Rule::StaticImport, &["import_declaration"], static_import::check),

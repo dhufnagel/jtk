@@ -18,6 +18,9 @@ mod when_guard;
 
 use super::{Check, Rule};
 
+/// The checks on the AST, with the kinds of trees each checks.
+pub(super) const TREE_CHECKS: &[(Rule, &[crate::ast::Tag], super::tree::TreeCheck)] = &[];
+
 pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
     (Rule::InstanceofPattern, &["if_statement"], instanceof_pattern::check),
     (

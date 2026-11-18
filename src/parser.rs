@@ -665,6 +665,7 @@ impl<'s> Parser<'s> {
             _ => return self.fail(),
         };
         let name = self.ident()?;
+        let name_pos = self.prev_start();
         let type_params = if self.peek() == "<" { self.type_params()? } else { vec![] };
         let mut record_components = Vec::new();
         if kind == ClassKind::Record {
@@ -734,6 +735,7 @@ impl<'s> Parser<'s> {
                 record_components,
                 enum_constants,
                 members,
+                name_pos,
             })),
         ))
     }
@@ -749,9 +751,10 @@ impl<'s> Parser<'s> {
     fn enum_constant(&mut self) -> P<EnumConstant> {
         let mods = self.modifiers()?;
         let name = self.ident()?;
+        let name_pos = self.prev_start();
         let args = if self.peek() == "(" { self.arguments()? } else { vec![] };
         let body = if self.peek() == "{" { Some(self.class_body(ClassKind::Class)?) } else { None };
-        Ok(EnumConstant { mods, name, args, body })
+        Ok(EnumConstant { mods, name, args, body, name_pos })
     }
 
     /// A class body, from `{`.
@@ -806,6 +809,7 @@ impl<'s> Parser<'s> {
         }
         if kind == ClassKind::Record && is_ident(self.peek()) && self.peek_n(1) == "{" {
             let name = self.ident()?;
+            let name_pos = self.prev_start();
             let body = self.ctor_block()?;
             return Ok(self.tree(
                 start,
@@ -821,6 +825,7 @@ impl<'s> Parser<'s> {
                     body: Some(Box::new(body)),
                     default_value: None,
                     compact_ctor: true,
+                    name_pos,
                 })),
             ));
         }
@@ -843,6 +848,7 @@ impl<'s> Parser<'s> {
     ) -> P<Tree> {
         let is_ctor = ret.is_none();
         let name = self.ident()?;
+        let name_pos = self.prev_start();
         let (receiver, params) = self.formal_parameters()?;
         if let Some(groups) = self.dims()? {
             ret = ret.map(|r| self.add_dims(r, groups));
@@ -883,6 +889,7 @@ impl<'s> Parser<'s> {
                 body,
                 default_value,
                 compact_ctor: false,
+                name_pos,
             })),
         ))
     }

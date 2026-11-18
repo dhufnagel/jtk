@@ -35,6 +35,15 @@ mod unused_parameter;
 
 use super::{Check, ConfiguredCheck, Rule};
 
+use crate::ast::Tag;
+
+/// The checks on the AST, with the kinds of trees each checks.
+pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
+    (Rule::EmptyCatch, &[Tag::Try], empty_catch::check),
+    (Rule::StringLiteralEquality, &[Tag::Binary], string_literal_equality::check),
+    (Rule::UnusedLocalVariable, &[Tag::Vars, Tag::ForEach, Tag::BindingPattern], unused_local_variable::check),
+];
+
 pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
     (Rule::EqualsHashCode, &["class_body", "enum_body_declarations"], equals_hash_code::check),
     (Rule::CovariantEquals, &["class_body", "enum_body_declarations"], covariant_equals::check),

@@ -349,7 +349,8 @@ pub fn lint_file(text: &str, path: Option<&Path>, settings: &Settings) -> Result
     });
     let unit = crate::parser::parse_cached(text)
         .map_or_else(|| crate::ast::Converter { src: text }.compilation_unit(&root).map(std::rc::Rc::new), Ok)?;
-    tree::check(&unit, text, &settings.selection, &mut diagnostics);
+    let mut context = tree::Context::new(text, &settings.options, path);
+    tree::check(&unit, &mut context, &settings.selection, &mut diagnostics);
     if let Some(path) = path {
         for (rule, check) in design::FILE_CHECKS {
             if settings.selection.includes(*rule) {

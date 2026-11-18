@@ -4,7 +4,7 @@
 //! (`ignored`, `expected`) or `_`, documents that the exception is swallowed on purpose.
 
 use crate::ast::{K, Tree};
-use crate::lint::tree::{Context, has_comment};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
 const INTENTIONAL_NAMES: &[&str] = &["ignored", "expected", "_"];
@@ -15,7 +15,7 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
         let block = &catch.block;
         let K::Block { stmts, .. } = &block.kind else { continue };
         if stmts.iter().any(|s| !matches!(s.kind, K::Empty))
-            || has_comment(context.text, block.start..block.end)
+            || context.tokens().has_comment(block.start..block.end)
             || INTENTIONAL_NAMES.contains(&catch.param.name.as_str())
         {
             continue;

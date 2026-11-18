@@ -24,6 +24,9 @@ use tree_sitter::Node;
 use super::syntax::is_comment;
 use super::{ConfiguredCheck, Diagnostic, Rule, RuleOptions};
 
+/// The checks on the AST, with the kinds of trees each checks.
+pub(super) const TREE_CHECKS: &[(Rule, &[crate::ast::Tag], super::tree::TreeCheck)] = &[];
+
 pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[
     (Rule::CyclomaticComplexity, &["program"], shared::<{ Shared::Cyclomatic as u8 }>),
     (Rule::BooleanExpressionComplexity, &["program"], shared::<{ Shared::BooleanExpression as u8 }>),
