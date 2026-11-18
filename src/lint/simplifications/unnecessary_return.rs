@@ -5,86 +5,60 @@
 //! The fix removes the statement (its whole line if it is alone on it) when it is in a block or a `case` group;
 //! elsewhere (`if (a) return;`) removing it would leave a statement without body.
 
-use tree_sitter::Node;
-
-use super::{contains_comment, line_removal_range};
-use crate::lint::syntax::is_comment;
+use crate::ast::{K, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(statement: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if statement.named_child_count() > 0 && statement.named_children(&mut statement.walk()).any(|c| !is_comment(&c)) {
+use super::line_removal;
+
+pub fn check(statement: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if !matches!(statement.kind, K::Return(None)) {
         return;
     }
-    let mut node = *statement;
-    let Some(container) = statement.parent() else { return };
-    let mut parent = container;
-    loop {
-        if matches!(
-            parent.kind(),
-            "method_declaration"
-                | "constructor_declaration"
-                | "compact_constructor_declaration"
-                | "lambda_expression"
-                | "static_initializer"
-                | "class_body"
-                | "enum_body_declarations"
-        ) {
-            break;
+    let mut node = statement;
+    for parent in context.ancestors.iter().rev() {
+        if matches!(parent.kind, K::Method(_) | K::Lambda { .. } | K::Class(_) | K::NewClass { .. }) {
+            let diagnostic = Diagnostic::new(Rule::UnnecessaryReturn, statement.start, "Unnecessary return statement");
+            let container = context.parent().map(|p| &p.kind);
+            let removable = matches!(container, Some(K::Block { .. } | K::Switch { .. } | K::SwitchExpr { .. }));
+            let has_comment = context.tokens().has_comment(statement.start..statement.end);
+            diagnostics.push(if removable && !has_comment {
+                diagnostic.with_fix(vec![line_removal(statement.start..statement.end, context.text)])
+            } else {
+                diagnostic
+            });
+            return;
         }
-        if is_statement(&node) && !is_last_statement(&node, &parent) {
+        if is_statement(node) && !is_last_statement(node, parent) {
             return;
         }
         node = parent;
-        let Some(next) = node.parent() else { return };
-        parent = next;
     }
-    let diagnostic = Diagnostic::new(Rule::UnnecessaryReturn, statement.start_byte(), "Unnecessary return statement");
-    let removable = matches!(container.kind(), "block" | "constructor_body" | "switch_block_statement_group");
-    diagnostics.push(if removable && !contains_comment(statement) {
-        diagnostic.with_fix(vec![line_removal_range(statement, text)])
-    } else {
-        diagnostic
-    });
 }
 
-fn is_statement(node: &Node) -> bool {
-    let kind = node.kind();
-    kind.ends_with("_statement") || matches!(kind, "block" | "constructor_body" | "switch_expression")
+fn is_statement(tree: &Tree) -> bool {
+    !tree.is_expression() || matches!(tree.kind, K::SwitchExpr { .. })
 }
 
 /// Whether the statement is the last thing its parent does before control leaves it.
-fn is_last_statement(statement: &Node, parent: &Node) -> bool {
-    if !is_last_child(statement) {
-        return matches!(parent.kind(), "if_statement" | "try_statement" | "try_with_resources_statement");
-    }
-    match parent.kind() {
-        "while_statement" | "for_statement" | "enhanced_for_statement" | "do_statement" => false,
-        "switch_block_statement_group" => is_last_child(parent) && !in_switch_expression(parent),
-        "switch_rule" => !in_switch_expression(parent),
+fn is_last_statement(statement: &Tree, parent: &Tree) -> bool {
+    match &parent.kind {
+        K::Block { stmts, .. } => is_last(statement, stmts),
+        K::While { .. } | K::DoWhile { .. } | K::For { .. } | K::ForEach { .. } => false,
+        // A rule's body ends the switch statement; the last statement of the last group does.
+        K::Switch { cases, .. } => {
+            match cases.iter().position(|c| c.stmts.iter().any(|s| std::ptr::eq(s, statement))) {
+                Some(index) => index == cases.len() - 1 && is_last(statement, &cases[index].stmts),
+                None => true,
+            }
+        }
+        K::SwitchExpr { .. } => false,
         _ => true,
     }
 }
 
-/// Whether the `case` of a switch belongs to a switch expression rather than a switch statement.
-fn in_switch_expression(case: &Node) -> bool {
-    let switch = case.parent().and_then(|block| block.parent());
-    let position = switch.and_then(|s| s.parent());
-    position.is_some_and(|p| {
-        !matches!(
-            p.kind(),
-            "block"
-                | "constructor_body"
-                | "switch_block_statement_group"
-                | "labeled_statement"
-                | "if_statement"
-                | "while_statement"
-                | "for_statement"
-                | "enhanced_for_statement"
-                | "do_statement"
-        )
-    })
-}
-
-fn is_last_child(node: &Node) -> bool {
-    std::iter::successors(node.next_named_sibling(), |n| n.next_named_sibling()).all(|n| is_comment(&n))
+/// Whether only empty statements follow the statement.
+fn is_last(statement: &Tree, statements: &[Tree]) -> bool {
+    let index = statements.iter().position(|s| std::ptr::eq(s, statement));
+    index.is_some_and(|i| statements[i + 1..].iter().all(|s| matches!(s.kind, K::Empty)))
 }

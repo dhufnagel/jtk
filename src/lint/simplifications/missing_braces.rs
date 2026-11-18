@@ -1,34 +1,30 @@
 //! S001: control statement body without braces (Checkstyle NeedBraces, PMD ControlStatementBraces, Eclipse "Use
 //! blocks"). `else if` is allowed.
 
-use tree_sitter::Node;
+use crate::ast::{K, Tree};
+use crate::lint::tree::Context;
+use crate::lint::{Diagnostic, Edit, Rule};
 
-use crate::lint::{Diagnostic, Edit, Rule, source};
-
-pub fn check(statement: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    for field in ["consequence", "alternative", "body"] {
-        let Some(body) = statement.child_by_field_name(field) else { continue };
-        let is_else_if = field == "alternative" && body.kind() == "if_statement";
-        if body.kind() == "block" || is_else_if {
+pub fn check(statement: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let (keyword, bodies): (&str, [Option<&Tree>; 2]) = match &statement.kind {
+        K::If { then, else_, .. } => ("if", [Some(then), else_.as_deref()]),
+        K::While { body, .. } => ("while", [Some(body), None]),
+        K::DoWhile { body, .. } => ("do", [Some(body), None]),
+        K::For { body, .. } | K::ForEach { body, .. } => ("for", [Some(body), None]),
+        _ => return,
+    };
+    for (index, body) in bodies.into_iter().enumerate() {
+        let Some(body) = body else { continue };
+        let is_else = index == 1;
+        if matches!(body.kind, K::Block { .. }) || is_else && matches!(body.kind, K::If { .. }) {
             continue;
         }
-        let keyword = if field == "alternative" { else_keyword(statement) } else { *statement };
-        let message = format!("'{}' body without braces", keyword_name(statement, field));
-        let braced = Edit::new(body.byte_range(), format!("{{ {} }}", source(&body, text)));
-        diagnostics.push(Diagnostic::new(Rule::MissingBraces, keyword.start_byte(), message).with_fix(vec![braced]));
-    }
-}
-
-fn else_keyword<'t>(statement: &Node<'t>) -> Node<'t> {
-    statement.children(&mut statement.walk()).find(|c| c.kind() == "else").unwrap_or(*statement)
-}
-
-fn keyword_name(statement: &Node, field: &str) -> &'static str {
-    match (statement.kind(), field) {
-        ("if_statement", "alternative") => "else",
-        ("if_statement", _) => "if",
-        ("while_statement", _) => "while",
-        ("do_statement", _) => "do",
-        _ => "for",
+        let (name, position) = match is_else {
+            true => ("else", context.tokens().previous(body.start).map_or(statement.start, |t| t.start)),
+            false => (keyword, statement.start),
+        };
+        let message = format!("'{name}' body without braces");
+        let braced = Edit::new(body.start..body.end, format!("{{ {} }}", context.source(body)));
+        diagnostics.push(Diagnostic::new(Rule::MissingBraces, position, message).with_fix(vec![braced]));
     }
 }

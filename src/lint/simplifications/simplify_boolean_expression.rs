@@ -3,85 +3,78 @@
 //!
 //! Fixed when no operand with possible side effects is dropped: `b == true` is `b`, but `f() || true` stays.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{is_boolean_literal, negation, operator, source, strip_parentheses};
+use crate::ast::{K, Tree};
+use crate::lint::tree::{Context, is_boolean_literal, negation, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
 
 const MESSAGE: &str = "Boolean expression can be simplified";
 
-pub fn check(expression: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let (position, simplified) = match expression.kind() {
-        "binary_expression" => match binary(expression, text) {
-            Some(found) => found,
-            None => return,
-        },
-        "unary_expression" => {
-            let Some(operand) = expression.child_by_field_name("operand") else { return };
-            let operand = strip_parentheses(&operand);
-            if operator(expression, text) != "!" || !is_boolean_literal(&operand) {
-                return;
-            }
-            let negated = if operand.kind() == "true" { "false" } else { "true" };
-            (expression.start_byte(), Some(negated.to_string()))
+pub fn check(expression: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let found = match &expression.kind {
+        K::Binary { op, lhs, rhs } => binary(op, lhs, rhs, context),
+        K::Unary { op, expr, .. } if op == "!" => {
+            let operand = strip_parens(expr);
+            is_boolean_literal(operand).then(|| {
+                let negated = if context.source(operand) == "true" { "false" } else { "true" };
+                (expression.start, Some(negated.to_string()))
+            })
         }
-        "ternary_expression" => match ternary(expression, text) {
-            Some(found) => found,
-            None => return,
-        },
-        _ => return,
+        K::Conditional { cond, then, else_ } => ternary(cond, then, else_, context),
+        _ => None,
     };
+    let Some((position, simplified)) = found else { return };
     let diagnostic = Diagnostic::new(Rule::SimplifyBooleanExpression, position, MESSAGE);
-    let fix = simplified.map(|s| Edit::new(expression.byte_range(), s));
+    let fix = simplified.map(|s| Edit::new(expression.start..expression.end, s));
     diagnostics.push(diagnostic.with_fix(fix.into_iter().collect()));
 }
 
 /// The position of the operator and the simplified expression, if it can be simplified safely.
-fn binary(expression: &Node, text: &str) -> Option<(usize, Option<String>)> {
-    let op = operator(expression, text);
+fn binary(op: &str, left: &Tree, right: &Tree, context: &Context) -> Option<(usize, Option<String>)> {
     if !matches!(op, "==" | "!=" | "&&" | "||") {
         return None;
     }
     // The other operand keeps its parentheses: `(a || b) == true` in `c && ...` must stay `c && (a || b)`.
-    let left = expression.child_by_field_name("left")?;
-    let right = expression.child_by_field_name("right")?;
-    let (literal, other, literal_first) = if is_boolean_literal(&strip_parentheses(&left)) {
-        (strip_parentheses(&left), right, true)
-    } else if is_boolean_literal(&strip_parentheses(&right)) {
-        (strip_parentheses(&right), left, false)
+    let (literal, other, literal_first) = if is_boolean_literal(strip_parens(left)) {
+        (strip_parens(left), right, true)
+    } else if is_boolean_literal(strip_parens(right)) {
+        (strip_parens(right), left, false)
     } else {
         return None;
     };
-    let value = literal.kind() == "true";
-    let other_code = || source(&other, text).to_string();
+    let value = context.source(literal) == "true";
+    let other_code = || context.source(other).to_string();
     let simplified = match (op, value) {
         ("==", true) | ("!=", false) => Some(other_code()),
-        ("==", false) | ("!=", true) => Some(negation(&other, text)),
+        ("==", false) | ("!=", true) => Some(negation(other, context.text)),
         ("&&", true) | ("||", false) => Some(other_code()),
         // `false && x` and `true || x` never evaluate x; `x && false` and `x || true` do.
-        ("&&", false) | ("||", true) if literal_first => Some(source(&literal, text).to_string()),
+        ("&&", false) | ("||", true) if literal_first => Some(context.source(literal).to_string()),
         _ => None,
     };
-    let operator_start = expression.child_by_field_name("operator").map_or(expression.start_byte(), |o| o.start_byte());
+    let operator_start = context.tokens().next(left.end).map_or(left.start, |o| o.start);
     Some((operator_start, simplified))
 }
 
 /// `true ? a : b`, or `c ? true : false` with literals in both branches.
-fn ternary(expression: &Node, text: &str) -> Option<(usize, Option<String>)> {
-    let condition = strip_parentheses(&expression.child_by_field_name("condition")?);
-    let consequence = strip_parentheses(&expression.child_by_field_name("consequence")?);
-    let alternative = strip_parentheses(&expression.child_by_field_name("alternative")?);
-    let question = expression.children(&mut expression.walk()).find(|c| c.kind() == "?")?.start_byte();
-    if is_boolean_literal(&condition) {
-        let chosen = if condition.kind() == "true" { consequence } else { alternative };
-        return Some((question, Some(source(&chosen, text).to_string())));
+fn ternary(
+    condition: &Tree,
+    consequence: &Tree,
+    alternative: &Tree,
+    context: &Context,
+) -> Option<(usize, Option<String>)> {
+    let question = context.tokens().next(condition.end)?.start;
+    let (condition, consequence, alternative) =
+        (strip_parens(condition), strip_parens(consequence), strip_parens(alternative));
+    if is_boolean_literal(condition) {
+        let chosen = if context.source(condition) == "true" { consequence } else { alternative };
+        return Some((question, Some(context.source(chosen).to_string())));
     }
-    if !is_boolean_literal(&consequence) || !is_boolean_literal(&alternative) {
+    if !is_boolean_literal(consequence) || !is_boolean_literal(alternative) {
         return None;
     }
-    let simplified = match (consequence.kind(), alternative.kind()) {
-        ("true", "false") => Some(source(&condition, text).to_string()),
-        ("false", "true") => Some(negation(&condition, text)),
+    let simplified = match (context.source(consequence), context.source(alternative)) {
+        ("true", "false") => Some(context.source(condition).to_string()),
+        ("false", "true") => Some(negation(condition, context.text)),
         _ => None,
     };
     Some((question, simplified))

@@ -5,74 +5,76 @@
 //! dimensions after a name move to its type. Declarations with comments inside are not split. Separate declarations
 //! on one line are left to the formatter.
 
-use tree_sitter::Node;
-
-use super::contains_comment;
-use crate::lint::syntax::{is_comment, named_children, source};
+use crate::ast::{K, Tree, VarDecl};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn check(container: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let children: Vec<Node> = named_children(container).into_iter().filter(|c| !is_comment(c)).collect();
-    for (index, declaration) in children.iter().enumerate() {
-        if !is_declaration(declaration) {
-            continue;
+pub fn check(container: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    match &container.kind {
+        K::Block { stmts, .. } => check_list(stmts, context, diagnostics),
+        K::Switch { cases, .. } | K::SwitchExpr { cases, .. } => {
+            for case in cases {
+                check_list(&case.stmts, context, diagnostics);
+            }
         }
-        let declarators = declarators(declaration);
+        K::Class(class) => {
+            check_list(&class.members, context, diagnostics);
+            for body in class.enum_constants.iter().filter_map(|c| c.body.as_deref()) {
+                check_list(body, context, diagnostics);
+            }
+        }
+        K::NewClass { body: Some(members), .. } => check_list(members, context, diagnostics),
+        _ => {}
+    }
+}
+
+/// Checks the declarations among the statements or members.
+fn check_list(children: &[Tree], context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let mut children = children.iter().filter(|c| !matches!(c.kind, K::Empty)).peekable();
+    while let Some(declaration) = children.next() {
+        let K::Vars(declarators) = &declaration.kind else { continue };
         if declarators.len() > 1 {
             let message = "Each variable declaration must be in its own statement";
-            let mut diagnostic = Diagnostic::new(Rule::MultipleDeclarations, declaration.start_byte(), message);
-            if let Some(split) = split(declaration, &declarators, text) {
-                diagnostic = diagnostic.with_fix(vec![Edit::new(declaration.byte_range(), split)]);
+            let mut diagnostic = Diagnostic::new(Rule::MultipleDeclarations, declaration.start, message);
+            if let Some(split) = split(declaration, declarators, context) {
+                diagnostic = diagnostic.with_fix(vec![Edit::new(declaration.start..declaration.end, split)]);
             }
             diagnostics.push(diagnostic);
         }
-        let next_on_same_line = children
-            .get(index + 1)
-            .is_some_and(|next| is_declaration(next) && next.start_position().row == declaration.end_position().row);
+        let next_on_same_line = children.peek().is_some_and(|next| {
+            matches!(next.kind, K::Vars(_)) && !context.text[declaration.end..next.start].contains('\n')
+        });
         if next_on_same_line {
             let message = "Only one variable definition per line allowed";
-            diagnostics.push(Diagnostic::new(Rule::MultipleDeclarations, declaration.start_byte(), message));
+            diagnostics.push(Diagnostic::new(Rule::MultipleDeclarations, declaration.start, message));
         }
     }
 }
 
-fn is_declaration(node: &Node) -> bool {
-    matches!(node.kind(), "field_declaration" | "constant_declaration" | "local_variable_declaration")
-}
-
-fn declarators<'t>(declaration: &Node<'t>) -> Vec<Node<'t>> {
-    named_children(declaration).into_iter().filter(|d| d.kind() == "variable_declarator").collect()
-}
-
 /// The declaration split into one per variable, on separate lines with the indentation of the first one.
-fn split(declaration: &Node, declarators: &[Node], text: &str) -> Option<String> {
-    if contains_comment(declaration) {
+fn split(declaration: &Tree, declarators: &[VarDecl], context: &Context) -> Option<String> {
+    let (text, tokens) = (context.text, context.tokens());
+    if tokens.has_comment(declaration.start..declaration.end) || declarators[0].ty.is_none() {
         return None;
     }
-    let declared_type = declaration.child_by_field_name("type")?;
-    if source(&declared_type, text) == "var" {
-        return None;
-    }
-    let prefix = &text[declaration.start_byte()..declared_type.end_byte()];
-    let line_start = text[..declaration.start_byte()].rfind('\n').map_or(0, |i| i + 1);
-    let before = &text[line_start..declaration.start_byte()];
+    // The type ends before the first name; C-style dimensions (`a[]`) extend a variable's type past its name.
+    let type_end = tokens.previous(declarators[0].name_pos)?.end;
+    let prefix = &text[declaration.start..type_end];
+    let line_start = text[..declaration.start].rfind('\n').map_or(0, |i| i + 1);
+    let before = &text[line_start..declaration.start];
     let separator = if before.trim().is_empty() { format!("\n{before}") } else { " ".to_string() };
     let parts: Vec<String> = declarators
         .iter()
         .map(|declarator| {
-            let name = declarator.child_by_field_name("name")?;
-            let (dimensions, rest) = match declarator.child_by_field_name("dimensions") {
-                Some(dimensions) => {
-                    if !named_children(&dimensions).is_empty() {
-                        // Annotated dimensions (`a @A []`).
-                        return None;
-                    }
-                    let dimensions_code: String = source(&dimensions, text).split_whitespace().collect();
-                    (dimensions_code, &text[dimensions.end_byte()..declarator.end_byte()])
-                }
-                None => (String::new(), &text[name.end_byte()..declarator.end_byte()]),
-            };
-            Some(format!("{prefix}{dimensions} {}{rest};", source(&name, text)))
+            let name_end = declarator.name_pos + declarator.name.len();
+            let dimensions_end = declarator.ty.as_deref().map_or(name_end, |t| t.end.max(name_end));
+            let dimensions = &text[name_end..dimensions_end];
+            if dimensions.contains('@') {
+                // Annotated dimensions (`a @A []`).
+                return None;
+            }
+            let dimensions: String = dimensions.split_whitespace().collect();
+            Some(format!("{prefix}{dimensions} {}{};", declarator.name, &text[dimensions_end..declarator.end]))
         })
         .collect::<Option<_>>()?;
     Some(parts.join(&separator))

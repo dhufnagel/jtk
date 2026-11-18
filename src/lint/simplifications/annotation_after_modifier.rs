@@ -6,11 +6,13 @@
 //! The fix moves the annotations before the first keyword (annotations in the modifier list annotate the same thing
 //! wherever they are).
 
-use tree_sitter::Node;
+use std::ops::Range;
 
-use super::contains_comment;
-use crate::lint::syntax::{modifiers, named_children, removal_range, source};
+use crate::ast::{ClassKind, K, Mods, Tree};
+use crate::lint::tree::{Context, modifier_keywords};
 use crate::lint::{Diagnostic, Edit, Rule};
+
+use super::removal_range;
 
 const JLS_ORDER: &[&str] = &[
     "public",
@@ -29,69 +31,105 @@ const JLS_ORDER: &[&str] = &[
     "strictfp",
 ];
 
-pub fn check(declaration: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if may_annotate_type(declaration) {
-        return;
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    match &tree.kind {
+        K::Class(class) => check_modifiers(&class.mods, context, diagnostics),
+        K::Method(method) => {
+            // Annotations after the keywords may annotate the type of a non-void method or of an annotation's
+            // element, or a constructor's.
+            let in_annotation =
+                context.parent().is_some_and(|p| matches!(&p.kind, K::Class(c) if c.kind == ClassKind::Annotation));
+            let may_annotate_type = match &method.ret {
+                Some(ret) => !in_annotation && !matches!(&ret.kind, K::Primitive(p) if p == "void"),
+                None => !method.compact_ctor,
+            };
+            if !may_annotate_type {
+                check_modifiers(&method.mods, context, diagnostics);
+            }
+        }
+        K::Try { resources, .. } => {
+            for resource in resources {
+                if let K::Var(var) = &resource.kind {
+                    check_modifiers(&var.mods, context, diagnostics);
+                }
+            }
+        }
+        _ => {}
     }
-    let Some(modifiers) = modifiers(declaration) else { return };
-    let items = named_children(&modifiers);
-    let mut first_keyword = None;
-    let mut last_rank = 0;
-    for (index, item) in items.iter().enumerate() {
-        if is_annotation(item) {
-            if let Some(first_keyword) = first_keyword {
-                report(&modifiers, &items, first_keyword, item, text, diagnostics);
-                return;
-            }
-        } else if let Some(rank) = JLS_ORDER.iter().position(|k| *k == source(item, text)) {
-            // Annotations after misordered keywords are left until the formatter has sorted the keywords.
-            if rank < last_rank {
-                return;
-            }
-            last_rank = rank;
-            first_keyword.get_or_insert(index);
+}
+
+/// A modifier: an annotation, or a keyword with its rank in the JLS order (`None` if it has none).
+enum Modifier<'t> {
+    Annotation(&'t Tree),
+    Keyword(Range<usize>, Option<usize>),
+}
+
+impl Modifier<'_> {
+    fn start(&self) -> usize {
+        match self {
+            Modifier::Annotation(a) => a.start,
+            Modifier::Keyword(range, _) => range.start,
         }
     }
 }
 
-/// Whether an annotation after the modifier keywords may be meant for the declared type rather than the declaration
-/// (`public @Nullable String name()`).
-fn may_annotate_type(declaration: &Node) -> bool {
-    match declaration.kind() {
-        "method_declaration" => declaration.child_by_field_name("type").is_some_and(|t| t.kind() != "void_type"),
-        "field_declaration"
-        | "constant_declaration"
-        | "local_variable_declaration"
-        | "formal_parameter"
-        | "spread_parameter"
-        | "catch_formal_parameter"
-        | "enhanced_for_statement"
-        | "constructor_declaration" => true,
-        _ => false,
+fn check_modifiers(mods: &Mods, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if mods.annotations.is_empty() {
+        return;
+    }
+    let keywords = modifier_keywords(mods, context.text, context.tokens());
+    let mut items: Vec<Modifier> = mods.annotations.iter().map(Modifier::Annotation).collect();
+    items.extend(keywords.into_iter().map(|(k, r)| Modifier::Keyword(r, JLS_ORDER.iter().position(|o| *o == k))));
+    items.sort_by_key(Modifier::start);
+    let mut first_keyword = None;
+    let mut last_rank = 0;
+    for (index, item) in items.iter().enumerate() {
+        match item {
+            Modifier::Annotation(annotation) => {
+                if let Some(first_keyword) = first_keyword {
+                    report(&items, first_keyword, annotation, context, diagnostics);
+                    return;
+                }
+            }
+            Modifier::Keyword(_, Some(rank)) => {
+                // Annotations after misordered keywords are left until the formatter has sorted the keywords.
+                if *rank < last_rank {
+                    return;
+                }
+                last_rank = *rank;
+                first_keyword.get_or_insert(index);
+            }
+            Modifier::Keyword(_, None) => {}
+        }
     }
 }
 
-fn is_annotation(node: &Node) -> bool {
-    matches!(node.kind(), "annotation" | "marker_annotation")
-}
-
 fn report(
-    modifiers: &Node,
-    items: &[Node],
+    items: &[Modifier],
     first_keyword: usize,
-    annotation: &Node,
-    text: &str,
+    annotation: &Tree,
+    context: &Context,
     diagnostics: &mut Vec<Diagnostic>,
 ) {
-    let name = annotation.child_by_field_name("name").map_or("", |n| source(&n, text));
-    let message = format!("'@{name}' annotation should precede the modifier keywords");
-    let mut diagnostic = Diagnostic::new(Rule::AnnotationAfterModifier, annotation.start_byte(), message);
-    if !contains_comment(modifiers) {
-        let misplaced: Vec<&Node> = items[first_keyword..].iter().filter(|m| is_annotation(m)).collect();
-        let moved: String = misplaced.iter().map(|a| format!("{} ", source(a, text))).collect();
-        let insertion = items[first_keyword].start_byte();
+    let K::Annotation { ty, .. } = &annotation.kind else { return };
+    let message = format!("'@{}' annotation should precede the modifier keywords", context.source(ty));
+    let mut diagnostic = Diagnostic::new(Rule::AnnotationAfterModifier, annotation.start, message);
+    let end = match &items[items.len() - 1] {
+        Modifier::Annotation(a) => a.end,
+        Modifier::Keyword(range, _) => range.end,
+    };
+    if !context.tokens().has_comment(items[0].start()..end) {
+        let misplaced: Vec<&Tree> = items[first_keyword..]
+            .iter()
+            .filter_map(|m| match m {
+                Modifier::Annotation(a) => Some(*a),
+                Modifier::Keyword(..) => None,
+            })
+            .collect();
+        let moved: String = misplaced.iter().map(|a| format!("{} ", context.source(a))).collect();
+        let insertion = items[first_keyword].start();
         let mut edits = vec![Edit::new(insertion..insertion, moved)];
-        edits.extend(misplaced.iter().map(|a| Edit::new(removal_range(a, text), "")));
+        edits.extend(misplaced.iter().map(|a| Edit::new(removal_range(a.start..a.end, context.text), "")));
         diagnostic = diagnostic.with_fix(edits);
     }
     diagnostics.push(diagnostic);

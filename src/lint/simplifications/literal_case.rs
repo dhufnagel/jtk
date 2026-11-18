@@ -5,14 +5,20 @@
 //!
 //! The fix rewrites the literal in that case.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::source;
+use crate::ast::{K, LitKind, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn check(literal: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let code = source(literal, text);
-    let is_floating = literal.kind().ends_with("floating_point_literal");
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Literal(kind) = tree.kind else { return };
+    let is_floating = match kind {
+        LitKind::Int | LitKind::Long => false,
+        LitKind::Float | LitKind::Double => true,
+        _ => return,
+    };
+    // A negative literal (`-1L`) is a tree of its own, but the number is its last token.
+    let Some(literal) = context.tokens().previous(tree.end) else { return };
+    let code = &context.text[literal.clone()];
     let mut messages = Vec::new();
     if !is_floating && code.ends_with('l') {
         messages.push("Should use uppercase 'L'");
@@ -35,9 +41,9 @@ pub fn check(literal: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
     if messages.is_empty() {
         return;
     }
-    let fix = Edit::new(literal.byte_range(), canonical(code, is_floating));
+    let fix = Edit::new(literal.clone(), canonical(code, is_floating));
     for message in messages {
-        diagnostics.push(Diagnostic::new(Rule::LiteralCase, literal.start_byte(), message).with_fix(vec![fix.clone()]));
+        diagnostics.push(Diagnostic::new(Rule::LiteralCase, literal.start, message).with_fix(vec![fix.clone()]));
     }
 }
 

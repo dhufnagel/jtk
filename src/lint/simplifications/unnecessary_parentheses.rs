@@ -4,73 +4,75 @@
 //! tighter than the one around it (`(a && b) || c`). Like Checkstyle, associativity is not considered: `(a + b) + c`
 //! is not reported.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{is_comment, named_children, operator, source};
+use crate::ast::{K, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
 
-const LITERALS: &[&str] = &[
-    "decimal_integer_literal",
-    "hex_integer_literal",
-    "octal_integer_literal",
-    "binary_integer_literal",
-    "decimal_floating_point_literal",
-    "hex_floating_point_literal",
-    "string_literal",
-    "character_literal",
-    "null_literal",
-    "true",
-    "false",
-];
-
-/// Statements whose parentheses belong to their syntax.
-const PARENTHESIZED_SYNTAX: &[&str] =
-    &["if_statement", "while_statement", "do_statement", "switch_expression", "synchronized_statement"];
-
-pub fn check(node: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    match node.kind() {
-        "parenthesized_expression" => check_parentheses(node, text, diagnostics),
-        "lambda_expression" => check_lambda_parameter(node, text, diagnostics),
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    match &tree.kind {
+        K::Parens(inner) => check_parentheses(tree, inner, context, diagnostics),
+        K::Lambda { params, .. } => check_lambda_parameter(tree, params, context, diagnostics),
         _ => {}
     }
 }
 
-fn check_parentheses(parentheses: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(parent) = parentheses.parent() else { return };
-    let inner: Vec<Node> = named_children(parentheses).into_iter().filter(|c| !is_comment(c)).collect();
-    let ([inner], false) = (inner.as_slice(), named_children(parentheses).iter().any(is_comment)) else { return };
-    if PARENTHESIZED_SYNTAX.contains(&parent.kind()) {
+fn check_parentheses(parentheses: &Tree, inner: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let Some(parent) = context.parent() else { return };
+    // Comments inside the inner expression stay with it.
+    let tokens = context.tokens();
+    let has_comment =
+        tokens.has_comment(parentheses.start..inner.start) || tokens.has_comment(inner.end..parentheses.end);
+    if has_comment || is_syntax(parentheses, parent) {
         return;
     }
-    let message = if inner.kind() == "identifier" {
-        format!("Unnecessary parentheses around identifier '{}'", source(inner, text))
-    } else if LITERALS.contains(&inner.kind()) {
-        format!("Unnecessary parentheses around literal '{}'", source(inner, text))
-    } else if parent.kind() == "parenthesized_expression" {
-        "Unnecessary parentheses around expression".to_string()
-    } else if is_whole_value(parentheses, &parent) {
-        "Unnecessary parentheses around a whole value".to_string()
-    } else if binds_tighter(parentheses, inner, &parent, text) {
-        "Unnecessary parentheses around expression".to_string()
-    } else {
-        return;
+    let is = |t: &Tree| std::ptr::eq(t, parentheses);
+    let message = match &inner.kind {
+        K::Ident(name) if name != "this" && name != "super" => {
+            format!("Unnecessary parentheses around identifier '{name}'")
+        }
+        K::Literal(_) if !is_negative_literal(inner, context) => {
+            format!("Unnecessary parentheses around literal '{}'", context.source(inner))
+        }
+        _ if matches!(parent.kind, K::Parens(_)) => "Unnecessary parentheses around expression".to_string(),
+        _ if is_whole_value(parent, &is, context) => "Unnecessary parentheses around a whole value".to_string(),
+        _ if binds_tighter(inner, parent, &is, context) => "Unnecessary parentheses around expression".to_string(),
+        _ => return,
     };
-    let fix = Edit::new(parentheses.byte_range(), source(inner, text));
-    diagnostics
-        .push(Diagnostic::new(Rule::UnnecessaryParentheses, parentheses.start_byte(), message).with_fix(vec![fix]));
+    let fix = Edit::new(parentheses.start..parentheses.end, context.source(inner));
+    diagnostics.push(Diagnostic::new(Rule::UnnecessaryParentheses, parentheses.start, message).with_fix(vec![fix]));
+}
+
+/// Whether the parentheses belong to the syntax of a statement or `switch`: `if (c)`, `switch (x)`.
+fn is_syntax(parentheses: &Tree, parent: &Tree) -> bool {
+    let is = |t: &Tree| std::ptr::eq(t, parentheses);
+    match &parent.kind {
+        K::If { .. } | K::While { .. } | K::DoWhile { .. } | K::Synchronized { .. } => true,
+        K::Switch { selector, .. } | K::SwitchExpr { selector, .. } => is(selector),
+        _ => false,
+    }
+}
+
+/// `-1` is a literal in the AST, but an operation in tree-sitter's syntax tree, whose behaviour the rule keeps.
+fn is_negative_literal(tree: &Tree, context: &Context) -> bool {
+    matches!(tree.kind, K::Literal(_)) && context.source(tree).starts_with('-')
 }
 
 /// The whole value of a `return`, `yield`, variable initializer, assignment, argument, lambda body, `case` label,
 /// guard or assertion.
-fn is_whole_value(parentheses: &Node, parent: &Node) -> bool {
-    match parent.kind() {
-        "return_statement" | "yield_statement" | "argument_list" | "guard" | "switch_label" | "assert_statement" => {
-            true
+fn is_whole_value(parent: &Tree, is: &impl Fn(&Tree) -> bool, context: &Context) -> bool {
+    match &parent.kind {
+        K::Return(_) | K::Yield(_) | K::Assert { .. } | K::Vars(_) | K::Var(_) => true,
+        K::MethodInvocation { args, .. } | K::NewClass { args, .. } => args.iter().any(is),
+        K::Class(class) => class.enum_constants.iter().any(|c| c.args.iter().any(is)),
+        K::Switch { cases, .. } | K::SwitchExpr { cases, .. } => {
+            cases.iter().any(|c| c.labels.iter().any(is) || c.guard.as_deref().is_some_and(is))
         }
-        "lambda_expression" => parent.child_by_field_name("body") == Some(*parentheses),
-        "for_statement" => parent.child_by_field_name("condition") == Some(*parentheses),
-        "variable_declarator" => parent.child_by_field_name("value") == Some(*parentheses),
-        "assignment_expression" => parent.child_by_field_name("right") == Some(*parentheses),
+        K::Lambda { body, .. } => is(body),
+        K::For { cond, .. } => cond.as_deref().is_some_and(is),
+        // An annotation's `name = value` is not an assignment.
+        K::Assign { rhs, .. } => {
+            is(rhs) && !context.grandparent().is_some_and(|g| matches!(g.kind, K::Annotation { .. }))
+        }
         _ => false,
     }
 }
@@ -79,37 +81,44 @@ fn is_whole_value(parentheses: &Node, parent: &Node) -> bool {
 /// them; arithmetic and bitwise operations are not reported.
 const CONDITIONAL_OPERATORS: &[&str] = &["&&", "||", "==", "!=", "<", ">", "<=", ">="];
 
-/// Expressions that bind tighter than any operator.
-const PRIMARY: &[&str] = &["method_invocation", "field_access", "array_access", "cast_expression", "this"];
+/// Expressions that bind tighter than any operator: calls, member and array accesses, casts and `this`.
+fn is_primary(tree: &Tree) -> bool {
+    match &tree.kind {
+        K::MethodInvocation { .. } | K::ArrayAccess { .. } | K::Cast { .. } => true,
+        K::MemberSelect { name, .. } => name != "class",
+        K::Ident(name) => name == "this",
+        _ => false,
+    }
+}
 
 /// Whether the parenthesized expression binds tighter than the operation around it: a comparison or logical
 /// operation inside `&&` or `||`, a unary operation inside a comparison or logical operation, or a call or member
 /// access inside any operation (a cast too, unless a member of it is selected). The condition of `?:` may keep its
 /// parentheses for clarity.
-fn binds_tighter(parentheses: &Node, inner: &Node, parent: &Node, text: &str) -> bool {
-    let is_primary = PRIMARY.contains(&inner.kind());
-    let outer = match parent.kind() {
-        "binary_expression" => operator(parent, text),
-        "ternary_expression" => return parent.child_by_field_name("condition") != Some(*parentheses) && is_primary,
-        "unary_expression" | "cast_expression" => return is_primary,
-        "method_invocation" | "field_access" => {
-            let is_object = parent.child_by_field_name("object") == Some(*parentheses);
-            return is_object && is_primary && inner.kind() != "cast_expression";
+fn binds_tighter(inner: &Tree, parent: &Tree, is: &impl Fn(&Tree) -> bool, context: &Context) -> bool {
+    let outer = match &parent.kind {
+        K::Binary { op, .. } => op.as_str(),
+        K::Conditional { cond, .. } => return !is(cond) && is_primary(inner),
+        K::Unary { op, .. } => return !matches!(op.as_str(), "++" | "--") && is_primary(inner),
+        K::Cast { .. } => return is_primary(inner),
+        // `(outer).super(...)` is a constructor invocation in tree-sitter's syntax tree, not a member access.
+        K::MemberSelect { name, .. } => {
+            return name != "super" && is_primary(inner) && !matches!(inner.kind, K::Cast { .. });
         }
         _ => return false,
     };
     let is_conditional_context = CONDITIONAL_OPERATORS.contains(&outer);
-    match inner.kind() {
-        "binary_expression" => {
-            let op = operator(inner, text);
+    match &inner.kind {
+        K::Binary { op, .. } => {
             // `p == (q <= r)` may need its parentheses: comparing booleans is not reported.
             matches!(outer, "&&" | "||")
-                && CONDITIONAL_OPERATORS.contains(&op)
+                && CONDITIONAL_OPERATORS.contains(&op.as_str())
                 && (precedence(op) > precedence(outer) || op == outer)
         }
-        "instanceof_expression" => is_conditional_context && precedence("instanceof") > precedence(outer),
-        "unary_expression" | "update_expression" => is_conditional_context,
-        kind => PRIMARY.contains(&kind),
+        K::InstanceOf { .. } => is_conditional_context && precedence("instanceof") > precedence(outer),
+        K::Unary { .. } => is_conditional_context,
+        K::Literal(_) => is_conditional_context && is_negative_literal(inner, context),
+        _ => is_primary(inner),
     }
 }
 
@@ -129,14 +138,18 @@ fn precedence(operator: &str) -> u8 {
 }
 
 /// `(x) -> ...`: a single parameter without type needs no parentheses.
-fn check_lambda_parameter(lambda: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(parameters) = lambda.child_by_field_name("parameters") else { return };
-    let names = named_children(&parameters);
-    if parameters.kind() != "inferred_parameters" || names.len() != 1 {
+fn check_lambda_parameter(
+    lambda: &Tree,
+    params: &[crate::ast::VarDecl],
+    context: &Context,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let [parameter] = params else { return };
+    if parameter.ty.is_some() || !context.text[lambda.start..].starts_with('(') {
         return;
     }
-    let fix = Edit::new(parameters.byte_range(), source(&names[0], text));
+    let Some(close) = context.tokens().next(parameter.end) else { return };
+    let fix = Edit::new(lambda.start..close.end, parameter.name.as_str());
     let message = "Unnecessary parentheses around lambda parameter";
-    diagnostics
-        .push(Diagnostic::new(Rule::UnnecessaryParentheses, parameters.start_byte(), message).with_fix(vec![fix]));
+    diagnostics.push(Diagnostic::new(Rule::UnnecessaryParentheses, lambda.start, message).with_fix(vec![fix]));
 }

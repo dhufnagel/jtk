@@ -3,34 +3,47 @@
 //! initializers. A block with only a comment counts as empty, one with only `;` does not. Empty `catch` blocks are
 //! B003's.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{is_comment, named_children};
+use crate::ast::{K, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(node: &Node, _text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let blocks: Vec<Node> = match node.kind() {
-        "if_statement" => ["consequence", "alternative"].iter().filter_map(|f| node.child_by_field_name(f)).collect(),
-        "finally_clause" | "static_initializer" => named_children(node),
-        // Instance initializers.
-        "class_body" | "enum_body_declarations" => named_children(node),
-        "switch_expression" => {
-            let Some(body) = node.child_by_field_name("body") else { return };
-            if named_children(&body).iter().all(is_comment) {
-                report(&body, diagnostics);
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let blocks: Vec<&Tree> = match &tree.kind {
+        K::If { then, else_, .. } => std::iter::once(&**then).chain(else_.as_deref()).collect(),
+        K::While { body, .. }
+        | K::DoWhile { body, .. }
+        | K::For { body, .. }
+        | K::ForEach { body, .. }
+        | K::Synchronized { block: body, .. } => vec![body],
+        K::Try { block, finally, .. } => std::iter::once(&**block).chain(finally.as_deref()).collect(),
+        // Initializers.
+        K::Class(class) => {
+            let constant_bodies = class.enum_constants.iter().filter_map(|c| c.body.as_deref()).flatten();
+            class.members.iter().chain(constant_bodies).collect()
+        }
+        K::NewClass { body: Some(members), .. } => members.iter().collect(),
+        K::Switch { selector, cases } | K::SwitchExpr { selector, cases } => {
+            if cases.is_empty()
+                && let Some(open) = context.tokens().next(selector.end)
+            {
+                report(open.start, diagnostics);
             }
             return;
         }
-        _ => node.child_by_field_name("body").into_iter().collect(),
+        _ => return,
     };
-    for block in blocks.iter().filter(|b| b.kind() == "block") {
-        let is_empty = block.children(&mut block.walk()).all(|c| matches!(c.kind(), "{" | "}") || is_comment(&c));
-        if is_empty {
-            report(block, diagnostics);
+    let tokens = context.tokens();
+    for block in blocks {
+        if let K::Block { is_static, stmts } = &block.kind
+            && stmts.is_empty()
+        {
+            // A static initializer starts at `static`.
+            let open = if *is_static { tokens.next(block.start).and_then(|k| tokens.next(k.end)) } else { None };
+            report(open.map_or(block.start, |o| o.start), diagnostics);
         }
     }
 }
 
-fn report(block: &Node, diagnostics: &mut Vec<Diagnostic>) {
-    diagnostics.push(Diagnostic::new(Rule::EmptyBlock, block.start_byte(), "Must have at least one statement"));
+fn report(position: usize, diagnostics: &mut Vec<Diagnostic>) {
+    diagnostics.push(Diagnostic::new(Rule::EmptyBlock, position, "Must have at least one statement"));
 }

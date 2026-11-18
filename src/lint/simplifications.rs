@@ -21,180 +21,88 @@ mod unnecessary_parentheses;
 mod unnecessary_return;
 mod unnecessary_semicolon;
 
-use tree_sitter::Node;
+use std::ops::Range;
 
 use super::{Check, Edit, Rule, syntax};
 
 use crate::ast::Tag;
 
 /// The checks on the AST, with the kinds of trees each checks.
-pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] =
-    &[(Rule::SimplifyBooleanReturn, &[Tag::If], simplify_boolean_return::check)];
-
-pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
-    (
-        Rule::MissingBraces,
-        &["if_statement", "for_statement", "enhanced_for_statement", "while_statement", "do_statement"],
-        missing_braces::check,
-    ),
-    (
-        Rule::SimplifyBooleanExpression,
-        &["binary_expression", "unary_expression", "ternary_expression"],
-        simplify_boolean_expression::check,
-    ),
-    (Rule::UnnecessaryParentheses, &["parenthesized_expression", "lambda_expression"], unnecessary_parentheses::check),
+pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
+    (Rule::MissingBraces, &[Tag::If, Tag::For, Tag::ForEach, Tag::While, Tag::DoWhile], missing_braces::check),
+    (Rule::SimplifyBooleanReturn, &[Tag::If], simplify_boolean_return::check),
+    (Rule::SimplifyBooleanExpression, &[Tag::Binary, Tag::Unary, Tag::Conditional], simplify_boolean_expression::check),
+    (Rule::CollapsibleIf, &[Tag::If], collapsible_if::check),
+    (Rule::LocalBeforeReturn, &[Tag::Return], local_before_return::check),
+    (Rule::UnnecessaryParentheses, &[Tag::Parens, Tag::Lambda], unnecessary_parentheses::check),
     (
         Rule::UnnecessarySemicolon,
         &[
-            "program",
-            "class_body",
-            "interface_body",
-            "annotation_type_body",
-            "enum_body_declarations",
-            "resource_specification",
-            "block",
-            "constructor_body",
-            "switch_block_statement_group",
-            "if_statement",
-            "while_statement",
-            "for_statement",
-            "enhanced_for_statement",
-            "labeled_statement",
-            "do_statement",
+            Tag::CompilationUnit,
+            Tag::Class,
+            Tag::NewClass,
+            Tag::Try,
+            Tag::Block,
+            Tag::Switch,
+            Tag::SwitchExpr,
+            Tag::If,
+            Tag::While,
+            Tag::For,
+            Tag::ForEach,
+            Tag::Labeled,
+            Tag::DoWhile,
         ],
         unnecessary_semicolon::check,
     ),
+    (Rule::RedundantModifier, &[Tag::Class, Tag::Method, Tag::Vars, Tag::Try, Tag::Lambda], redundant_modifier::check),
+    (Rule::AnnotationAfterModifier, &[Tag::Class, Tag::Method, Tag::Try], annotation_after_modifier::check),
+    (Rule::UnnecessaryReturn, &[Tag::Return], unnecessary_return::check),
+    (Rule::SuperConstructorCall, &[Tag::Method], super_constructor_call::check),
+    (Rule::ExplicitInitialization, &[Tag::Vars], explicit_initialization::check),
     (
-        Rule::RedundantModifier,
-        &[
-            "interface_declaration",
-            "annotation_type_declaration",
-            "enum_declaration",
-            "record_declaration",
-            "class_declaration",
-            "method_declaration",
-            "constructor_declaration",
-            "field_declaration",
-            "constant_declaration",
-            "annotation_type_element_declaration",
-            "resource",
-            "local_variable_declaration",
-            "catch_formal_parameter",
-            "formal_parameter",
-        ],
-        redundant_modifier::check,
+        Rule::MultipleDeclarations,
+        &[Tag::Block, Tag::Switch, Tag::SwitchExpr, Tag::Class, Tag::NewClass],
+        multiple_declarations::check,
     ),
-    (
-        Rule::AnnotationAfterModifier,
-        &[
-            "class_declaration",
-            "interface_declaration",
-            "enum_declaration",
-            "record_declaration",
-            "annotation_type_declaration",
-            "method_declaration",
-            "constructor_declaration",
-            "compact_constructor_declaration",
-            "field_declaration",
-            "constant_declaration",
-            "annotation_type_element_declaration",
-            "local_variable_declaration",
-            "formal_parameter",
-            "spread_parameter",
-            "catch_formal_parameter",
-            "resource",
-            "enhanced_for_statement",
-        ],
-        annotation_after_modifier::check,
-    ),
-    (Rule::SuperConstructorCall, &["constructor_body"], super_constructor_call::check),
-    (Rule::ExplicitInitialization, &["field_declaration"], explicit_initialization::check),
-    (Rule::MultipleDeclarations, STATEMENT_CONTAINERS, multiple_declarations::check),
     (
         Rule::ArrayTypeStyle,
-        &[
-            "field_declaration",
-            "constant_declaration",
-            "local_variable_declaration",
-            "formal_parameter",
-            "catch_formal_parameter",
-            "resource",
-            "enhanced_for_statement",
-            "method_declaration",
-            "annotation_type_element_declaration",
-        ],
+        &[Tag::Vars, Tag::Method, Tag::Class, Tag::Lambda, Tag::Try, Tag::ForEach],
         array_type_style::check,
     ),
-    (
-        Rule::LiteralCase,
-        &[
-            "decimal_integer_literal",
-            "hex_integer_literal",
-            "octal_integer_literal",
-            "binary_integer_literal",
-            "decimal_floating_point_literal",
-            "hex_floating_point_literal",
-        ],
-        literal_case::check,
-    ),
+    (Rule::LiteralCase, &[Tag::Literal], literal_case::check),
     (
         Rule::EmptyBlock,
         &[
-            "while_statement",
-            "try_statement",
-            "try_with_resources_statement",
-            "finally_clause",
-            "do_statement",
-            "if_statement",
-            "for_statement",
-            "enhanced_for_statement",
-            "static_initializer",
-            "class_body",
-            "enum_body_declarations",
-            "switch_expression",
-            "synchronized_statement",
+            Tag::If,
+            Tag::While,
+            Tag::DoWhile,
+            Tag::For,
+            Tag::ForEach,
+            Tag::Synchronized,
+            Tag::Try,
+            Tag::Class,
+            Tag::NewClass,
+            Tag::Switch,
+            Tag::SwitchExpr,
         ],
         empty_block::check,
     ),
-    (Rule::NestedBlock, &["block", "constructor_body", "switch_block_statement_group"], nested_block::check),
-    (Rule::NullCheckBeforeInstanceof, &["instanceof_expression"], null_check_before_instanceof::check),
-    (Rule::ExpressionLambda, &["lambda_expression"], expression_lambda::check),
-    (Rule::CollapsibleIf, &["if_statement"], collapsible_if::check),
-    (Rule::LocalBeforeReturn, &["return_statement"], local_before_return::check),
-    (Rule::UnnecessaryReturn, &["return_statement"], unnecessary_return::check),
-    (
-        Rule::UnnecessaryInstantiation,
-        &["object_creation_expression", "method_invocation"],
-        unnecessary_instantiation::check,
-    ),
+    (Rule::NestedBlock, &[Tag::Block, Tag::Switch, Tag::SwitchExpr], nested_block::check),
+    (Rule::UnnecessaryInstantiation, &[Tag::NewClass, Tag::MethodInvocation], unnecessary_instantiation::check),
+    (Rule::NullCheckBeforeInstanceof, &[Tag::InstanceOf], null_check_before_instanceof::check),
+    (Rule::ExpressionLambda, &[Tag::Lambda], expression_lambda::check),
 ];
 
-/// The nodes whose children are member declarations or statements.
-const STATEMENT_CONTAINERS: &[&str] = &[
-    "class_body",
-    "interface_body",
-    "annotation_type_body",
-    "enum_body_declarations",
-    "block",
-    "constructor_body",
-    "switch_block_statement_group",
-];
+/// The checks on tree-sitter's syntax tree: none, all rules of the group check the AST.
+pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[];
 
-/// Whether a comment is inside the node: fixes that rewrite the node would lose it.
-fn contains_comment(node: &Node) -> bool {
-    comment_in(node, node.byte_range())
+/// The range that removes a token or annotation together with the whitespace after it on the same line.
+fn removal_range(range: Range<usize>, text: &str) -> Range<usize> {
+    let trailing = text[range.end..].len() - text[range.end..].trim_start_matches([' ', '\t']).len();
+    range.start..range.end + trailing
 }
 
-/// Whether a comment inside the node overlaps the range.
-fn comment_in(node: &Node, range: std::ops::Range<usize>) -> bool {
-    let mut found = false;
-    syntax::for_each_descendant(node, &[], |n| {
-        found |= syntax::is_comment(n) && n.start_byte() < range.end && range.start < n.end_byte();
-    });
-    found
-}
-
-/// The edit that removes a node: its whole line if nothing else is on it, otherwise with the spaces after it.
-fn line_removal_range(node: &Node, text: &str) -> Edit {
-    Edit::new(syntax::line_removal_range(node, text), "")
+/// The edit that removes a statement: its whole line if nothing else is on it, otherwise with the spaces after it.
+fn line_removal(range: Range<usize>, text: &str) -> Edit {
+    Edit::new(syntax::span_removal_range(range, text), "")
 }
