@@ -15,7 +15,6 @@ pub mod modifiers;
 pub mod newlines;
 pub mod ops;
 pub mod output;
-pub mod parse;
 pub mod parser;
 pub mod string_wrapper;
 pub mod visitor;

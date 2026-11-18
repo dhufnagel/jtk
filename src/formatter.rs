@@ -4,7 +4,6 @@
 
 //! Entry point tying the pipeline together (port of `Formatter.java`).
 
-use crate::ast::Converter;
 use crate::comments::CommentsHelper;
 use crate::doc::{Docs, Layout, State};
 use crate::input::JavaInput;
@@ -12,7 +11,7 @@ use crate::lint::{self, Diagnostic, Settings};
 use crate::ops::OpsBuilder;
 use crate::output::{JavaOutput, Replacement};
 use crate::visitor::Visitor;
-use crate::{imports, modifiers, parse, parser, string_wrapper};
+use crate::{imports, modifiers, parser, string_wrapper};
 
 /// Line length and indentation. Only the Palantir style is offered on the command line; the Google style's numbers
 /// are used to run upstream tests that were written for it.
@@ -267,14 +266,8 @@ pub fn format_replacements_with(
         input = JavaInput::new(reordered)?;
     }
     let text = reordered.as_deref().unwrap_or(text);
-    // The hand-written parser produces the same tree as converting tree-sitter's; the latter reports syntax errors.
-    let unit = match parser::parse_cached(text) {
-        Some(unit) => unit,
-        None => {
-            let tree = parse::parse(text).ok_or_else(|| FormatError::new("parse failed"))?;
-            std::rc::Rc::new(Converter { src: text }.compilation_unit(&tree.root_node())?)
-        }
-    };
+    let unit =
+        parser::parse_cached(text).map_err(|error| FormatError::at_offset(text, error.offset, "syntax error"))?;
 
     let style = options.style;
     let mut visitor = Visitor::new(OpsBuilder::new(&input), text, style.indent_multiplier);

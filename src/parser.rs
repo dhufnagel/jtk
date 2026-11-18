@@ -1,9 +1,8 @@
 //! A hand-written recursive-descent Java parser that builds the AST of [`crate::ast`] directly.
 //!
-//! It produces exactly the trees that converting tree-sitter's syntax tree produces ([`crate::ast::Converter`]),
+//! It produces exactly the trees that converting tree-sitter's syntax tree produces (`tests/support/converter.rs`),
 //! including the converter's positions and its adjustments to tree-sitter's shapes, and is checked against it. It
-//! does not recover from errors: input it cannot parse is left to the tree-sitter path, which reports the syntax
-//! error.
+//! does not recover from errors: it reports where parsing stopped.
 
 use crate::ast::{
     B, Case, CaseKind, Catch, ClassDecl, ClassKind, EnumConstant, K, LitKind, MethodDecl, Mods, Tree, VarDecl,
@@ -14,7 +13,7 @@ use std::rc::Rc;
 use crate::input::{RawKind, lex};
 
 /// Where parsing stopped (a byte offset), for diagnostics.
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct ParseError {
     pub offset: usize,
 }
@@ -22,19 +21,19 @@ pub struct ParseError {
 type P<T> = Result<T, ParseError>;
 
 thread_local! {
-    static LAST: RefCell<Option<(String, Option<Rc<Tree>>)>> = const { RefCell::new(None) };
+    static LAST: RefCell<Option<(String, P<Rc<Tree>>)>> = const { RefCell::new(None) };
 }
 
 /// [`parse`], reusing the result if `text` is the text of the previous call on this thread: formatting and the
-/// analysis of unused imports parse the same input. `None` if the text cannot be parsed.
-pub fn parse_cached(text: &str) -> Option<Rc<Tree>> {
+/// analysis of unused imports parse the same input.
+pub fn parse_cached(text: &str) -> P<Rc<Tree>> {
     LAST.with_borrow_mut(|last| {
         if let Some((t, tree)) = last.as_ref()
             && t == text
         {
             return tree.clone();
         }
-        let tree = parse(text).ok().map(Rc::new);
+        let tree = parse(text).map(Rc::new);
         *last = Some((text.to_string(), tree.clone()));
         tree
     })
@@ -402,7 +401,7 @@ impl<'s> Parser<'s> {
             return false;
         }
         match self.scan_type(self.pos) {
-            Some(j) => is_ident(self.text_at(j)) && matches!(self.text_at(j + 1), "=" | ";" | "," | "[" | ":"),
+            Some(j) => is_ident(self.text_at(j)) && matches!(self.text_at(j + 1), "=" | ";" | "," | "[" | ":" | "@"),
             None => false,
         }
     }
@@ -475,9 +474,15 @@ impl<'s> Parser<'s> {
                 "module" => module = Some(Box::new(self.module()?)),
                 "open" if self.text_at(after_annotations + 1) == "module" => module = Some(Box::new(self.module()?)),
                 _ => {
-                    let start = self.cur_start();
+                    let (start, pos) = (self.cur_start(), self.pos);
                     let mods = self.modifiers()?;
-                    types.push(self.class_decl(start, mods)?);
+                    if self.at_class_decl() {
+                        types.push(self.class_decl(start, mods)?);
+                    } else {
+                        // A field or method of the implicit class of a compact source file (Java 25).
+                        self.pos = pos;
+                        types.push(self.member(ClassKind::Class)?);
+                    }
                 }
             }
         }
@@ -490,6 +495,10 @@ impl<'s> Parser<'s> {
         let start = self.cur_start();
         self.expect("import")?;
         let is_static = self.eat("static");
+        // A module import (Java 25), `import module java.base;`, is kept as an import of the module's name.
+        if !is_static && self.peek() == "module" && is_ident(self.peek_n(1)) {
+            self.bump()?;
+        }
         let mut name = self.qualified_name()?;
         if self.peek() == "." && self.peek_n(1) == "*" {
             self.bump_n(2)?;
@@ -708,6 +717,10 @@ impl<'s> Parser<'s> {
         let mut enum_constants = Vec::new();
         self.expect("{")?;
         if kind == ClassKind::Enum {
+            // An enum without constants may still have the separating comma: `enum E { , }`.
+            if self.peek() == "," {
+                self.bump()?;
+            }
             while !matches!(self.peek(), ";" | "}") {
                 enum_constants.push(self.enum_constant()?);
                 if !self.eat(",") {
@@ -1042,6 +1055,10 @@ impl<'s> Parser<'s> {
         let start = self.cur_start();
         self.expect("{")?;
         let mut init = Vec::new();
+        // `{,}` is an empty initializer.
+        if self.peek() == "," && self.peek_n(1) == "}" {
+            self.bump()?;
+        }
         while !self.eat("}") {
             init.push(self.var_init()?);
             if !self.eat(",") {
@@ -1423,8 +1440,11 @@ impl<'s> Parser<'s> {
             return false;
         }
         j += 1;
-        while self.text_at(j) == "[" && self.text_at(j + 1) == "]" {
-            j += 2;
+        while let Some(k) = self.scan_annotations(j)
+            && self.text_at(k) == "["
+            && self.text_at(k + 1) == "]"
+        {
+            j = k + 2;
         }
         self.text_at(j) == ":"
     }
@@ -1889,6 +1909,18 @@ impl<'s> Parser<'s> {
                 Ok(ident)
             }
             "new" => self.creator(None),
+            // An annotated type before `::`: `@A T::new`.
+            "@" => {
+                let mut annotations = Vec::new();
+                while self.at_annotation() {
+                    annotations.push(self.annotation()?);
+                }
+                let base = self.unannotated_type()?;
+                if self.peek() != "::" {
+                    return self.fail();
+                }
+                Ok(self.annotate(start, annotations, base))
+            }
             "switch" => {
                 let (selector, cases) = self.switch()?;
                 Ok(self.tree(start, K::SwitchExpr { selector, cases }))

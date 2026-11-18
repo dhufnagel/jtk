@@ -17,8 +17,8 @@ mod throws_exception;
 
 use crate::ast::{ClassDecl, K, Mods, Tag, Tree};
 
+use super::Rule;
 use super::tree::{Context, has_modifier};
-use super::{Check, ConfiguredCheck, FileCheck, Rule};
 
 /// The checks on the AST, with the kinds of trees each checks.
 pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
@@ -36,14 +36,6 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::MagicNumber, &[Tag::Literal], magic_number::check),
     (Rule::OuterTypeFilename, &[Tag::CompilationUnit], outer_type_filename::check),
 ];
-
-pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[];
-
-/// The checks of rules with parameters.
-pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[];
-
-/// Checks of the compilation unit against the file's path.
-pub(super) const FILE_CHECKS: &[(Rule, FileCheck)] = &[];
 
 /// Whether a declaration whose modifiers end before `end` (its name) has the modifier keyword. Lexes only if the
 /// keyword is in the text.

@@ -19,7 +19,7 @@ mod cognitive;
 use std::cell::RefCell;
 
 use super::tree::{Context, TreeCheck};
-use super::{ConfiguredCheck, Diagnostic, Rule, RuleOptions};
+use super::{Diagnostic, Rule, RuleOptions};
 use crate::ast::{ClassKind, K, Tag, Tree};
 
 /// The checks on the AST, with the kinds of trees each checks.
@@ -42,8 +42,6 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], TreeCheck)] = &[
     (Rule::ThrowsCount, &[Tag::Method], counts::check_throws),
     (Rule::CognitiveComplexity, &[Tag::Method], cognitive::check),
 ];
-
-pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[];
 
 /// The rules that keep state while visiting the whole compilation unit. They share one walk over the syntax tree
 /// (the walk costs more than most rules' work), whose results are kept for the other rules.

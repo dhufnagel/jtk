@@ -9,7 +9,7 @@ It ports the original pipeline closely:
 | Module | Ported from |
 |---|---|
 | `input.rs` | `JavaInput`, `JavacTokens` (own lexer instead of javac's) |
-| `ast.rs` | – (converts the [tree-sitter-java-orchard](https://codeberg.org/grammar-orchard/tree-sitter-java-orchard) tree into a javac-shaped AST) |
+| `parser.rs`, `ast.rs` | – (a hand-written recursive-descent parser that builds a javac-shaped AST) |
 | `visitor.rs` | `JavaInputAstVisitor`, `Java14InputAstVisitor`, `Java21InputAstVisitor`, `TypeNameClassifier` |
 | `ops.rs` | `OpsBuilder` |
 | `doc.rs` | `doc/*` (`Level`, `Break`, `State`, …): the line-breaking algorithm |
@@ -176,16 +176,17 @@ PJF_TEST=B20128760 cargo test --release -- --nocapture   # one case, prints the 
 cargo run --release --example corpus_check -- <dir>     # crash/idempotency check over a source tree
 ```
 
-Status: 223 of 226 cases pass. The 3 failures are invalid Java that javac's parser accepts but the tree-sitter
-grammar rejects:
+Status: 223 of 226 cases pass. The 3 failures are invalid Java that javac's parser accepts but jtk's parser
+rejects:
 
 - `this(...)` / `super(...)` outside a constructor body (`B26952926`, `palantir-expression-lambda-2`)
 - annotations mixing positional and named arguments (`B38352414`)
 
-The parser is [tree-sitter-java-orchard](https://codeberg.org/grammar-orchard/tree-sitter-java-orchard), a maintained
-fork of tree-sitter-java (which no longer merges contributions). It supports Java 21–25 syntax that tree-sitter-java
-does not, such as qualified record patterns, several patterns in one `case`, statements before `this()`/`super()`,
-and annotated varargs.
+The parser is hand-written (`src/parser.rs`) and supports Java up to 25, including compact source files and module
+imports. It builds the same trees as converting the syntax tree of
+[tree-sitter-java-orchard](https://codeberg.org/grammar-orchard/tree-sitter-java-orchard), which jtk used before:
+`tests/parser.rs` and `cargo run --release --example parser_check -- <dir>` check this, with tree-sitter as a
+development dependency only. Formatting and linting use the same tree.
 
 ## Comparison with the original
 

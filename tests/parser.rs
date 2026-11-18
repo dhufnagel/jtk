@@ -1,12 +1,15 @@
 //! The hand-written parser builds the same trees as converting tree-sitter's syntax trees.
 
+#[path = "support/converter.rs"]
+mod converter;
+
 use std::fs;
 use std::path::Path;
 
 /// Parses `text` both ways: the trees (or failures) must agree.
 fn assert_same_tree(name: &str, text: &str) {
-    let converted = jtk::parse::parse(text)
-        .and_then(|tree| jtk::ast::Converter { src: text }.compilation_unit(&tree.root_node()).ok())
+    let converted = converter::parse(text)
+        .and_then(|tree| converter::Converter { src: text }.compilation_unit(&tree.root_node()).ok())
         .map(|t| format!("{t:?}"));
     let own = jtk::parser::parse(text).ok().map(|t| format!("{t:?}"));
     assert_eq!(converted, own, "{name}");
@@ -55,6 +58,10 @@ fn same_trees_for_constructs_with_tree_sitter_quirks() {
         "class A { void f() { g((a, b) -> a, (int c) -> { }, () -> d, (Runnable) () -> {}, x -> x); new B<>() {}; o.new C(); new int[3][]; new @A int @B [] {1}; } }",
         // Constructor type arguments.
         "class A { Object o = new <String>Object(), p = new <T>K<U>() {}, q = a.new <T>B(); }",
+        // Annotated method reference types, empty initializers with a comma, annotated dimensions after names.
+        "class A { Object o = f(@A B::new); int[] a = {,}; enum E { , } void f() { for (String s @M [] : m) {} int b @N [] = null; } }",
+        // Compact source files and module imports (Java 25).
+        "import module java.base;\nimport a.B;\nint x = 1;\nvoid main() { }\nclass C {}",
         // Empty input and comments only.
         "",
         "  // comment\n",

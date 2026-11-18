@@ -22,7 +22,7 @@ mod abbreviation_in_name;
 mod illegal_identifier;
 
 use super::tree::{Context, TreeCheck, modifier_keywords};
-use super::{Check, ConfiguredCheck, Diagnostic, Rule};
+use super::{Diagnostic, Rule};
 use crate::ast::{ClassKind, K, Mods, Tag, Tree, VarDecl};
 
 /// The formats, as Checkstyle's regular expressions spell them.
@@ -291,8 +291,3 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], TreeCheck)] = &[
 /// The kinds of trees that declare the names N013 and N014 check.
 const DECLARING: &[Tag] =
     &[Tag::Class, Tag::Method, Tag::Vars, Tag::ForEach, Tag::Lambda, Tag::Try, Tag::BindingPattern];
-
-pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[];
-
-/// The checks of rules with parameters.
-pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[];

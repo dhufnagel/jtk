@@ -11,7 +11,7 @@ google-java-format: Copyright 2015-2019 Google Inc.
 
 The formatter in src/ is a translation of palantir-java-format's Java sources into Rust. The
 translated files have been modified: they were ported to Rust, restructured, and adapted to a
-tree-sitter based parser instead of javac. Each of them names the original it was derived from.
+hand-written parser instead of javac. Each of them names the original it was derived from.
 
 The test cases in tests/testdata, tests/imports and tests/javadoc are taken from
 palantir-java-format's test suite.

@@ -1,8 +1,11 @@
-//! Parses every `.java` file below a directory with the hand-written parser and with tree-sitter (converted), and
-//! checks that both produce the same tree. Files the hand-written parser cannot parse are formatted through
-//! tree-sitter, so they are only counted; files only tree-sitter rejects would change behaviour and are listed.
+//! Parses every `.java` file below a directory (or listed in a file, one path per line) with the hand-written parser
+//! and with tree-sitter (converted), and checks that both produce the same tree. Files only one parser accepts are
+//! listed.
 //!
-//! Usage: `cargo run --release --example parser_check -- <dir>`
+//! Usage: `cargo run --release --example parser_check -- <dir or file list>`
+
+#[path = "../tests/support/converter.rs"]
+mod converter;
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -21,7 +24,11 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
 fn main() {
     let dir = std::env::args().nth(1).expect("usage: parser_check <dir>");
     let mut files = Vec::new();
-    collect(Path::new(&dir), &mut files);
+    if Path::new(&dir).is_dir() {
+        collect(Path::new(&dir), &mut files);
+    } else {
+        files = std::fs::read_to_string(&dir).unwrap().lines().map(PathBuf::from).collect();
+    }
     files.sort();
     // Deeply nested input needs a large stack, as when formatting.
     let code = std::thread::Builder::new().stack_size(1 << 28).spawn(move || check(&files)).unwrap().join().unwrap();
@@ -34,8 +41,8 @@ fn check(files: &[PathBuf]) -> i32 {
     for path in files {
         let Ok(text) = std::fs::read_to_string(path) else { continue };
         let start = Instant::now();
-        let converted = jtk::parse::parse(&text)
-            .and_then(|tree| jtk::ast::Converter { src: &text }.compilation_unit(&tree.root_node()).ok());
+        let converted = converter::parse(&text)
+            .and_then(|tree| converter::Converter { src: &text }.compilation_unit(&tree.root_node()).ok());
         tree_sitter_time += start.elapsed();
         let start = Instant::now();
         let own = jtk::parser::parse(&text).ok();
@@ -57,7 +64,10 @@ fn check(files: &[PathBuf]) -> i32 {
                     );
                 }
             }
-            (Some(_), None) => own_failed += 1,
+            (Some(_), None) => {
+                own_failed += 1;
+                println!("{}: only the parser rejects it", path.display());
+            }
             (None, Some(_)) => {
                 problems += 1;
                 println!("{}: only tree-sitter rejects it", path.display());
@@ -66,7 +76,7 @@ fn check(files: &[PathBuf]) -> i32 {
         }
     }
     println!(
-        "{} files: {same} same, {own_failed} left to tree-sitter, {problems} problems; tree-sitter {:.2?}, parser {:.2?}",
+        "{} files: {same} same, {own_failed} rejected by the parser only, {problems} problems; tree-sitter {:.2?}, parser {:.2?}",
         files.len(),
         tree_sitter_time,
         own_time

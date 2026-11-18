@@ -5,8 +5,8 @@ mod illegal_import;
 mod star_import;
 mod static_import;
 
+use super::Rule;
 use super::tree::{Context, TreeCheck};
-use super::{Check, ConfiguredCheck, Rule};
 use crate::ast::{K, Tag, Tree};
 
 /// The checks on the AST, with the kinds of trees each checks.
@@ -16,11 +16,6 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], TreeCheck)] = &[
     (Rule::IllegalImport, &[Tag::Import], illegal_import::check),
     (Rule::FullyQualifiedType, &[Tag::CompilationUnit], fully_qualified_type::check),
 ];
-
-pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[];
-
-/// The checks of rules with parameters.
-pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[];
 
 /// The name an import imports, and whether the import is on demand: the name of `import a.b.*;` is `a.b`.
 fn import_name(import: &Tree) -> Option<(&Tree, bool)> {

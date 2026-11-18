@@ -9,8 +9,7 @@
 use std::ops::Range;
 
 use crate::ast::{CaseKind, ClassKind, K, LitKind, Tree, VarDecl};
-use crate::lint::syntax::span_removal_range;
-use crate::lint::tree::{Context, in_type, path_to, strip_parens};
+use crate::lint::tree::{Context, in_type, path_to, span_removal_range, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
 
 /// Where a variable is visible: a range of the source below a tree.

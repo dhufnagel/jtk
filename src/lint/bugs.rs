@@ -11,7 +11,6 @@ mod equals_avoid_null;
 mod equals_hash_code;
 mod equals_null;
 pub(super) mod fall_through;
-mod fall_through_cst;
 mod finally_exit;
 mod identical_operands;
 mod illegal_catch;
@@ -36,7 +35,7 @@ mod shared_a;
 mod suspicious_octal_escape;
 mod unused_parameter;
 
-use super::{Check, ConfiguredCheck, Rule};
+use super::Rule;
 
 use crate::ast::Tag;
 
@@ -75,9 +74,3 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::Finalizer, &[Tag::Method], avoided_methods::check_finalizer),
     (Rule::Clone, &[Tag::Method], avoided_methods::check_clone),
 ];
-
-pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
-];
-
-/// The checks of rules with parameters.
-pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[];

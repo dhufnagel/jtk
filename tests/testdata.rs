@@ -16,7 +16,7 @@ fn first_diff(expected: &str, actual: &str) -> String {
     format!("line count differs: expected {}, actual {}", expected.lines().count(), actual.lines().count())
 }
 
-/// Inputs that javac's parser accepts but the tree-sitter grammar rejects. They are not valid Java: `this(...)` outside
+/// Inputs that javac's parser accepts but jtk's parser (like the tree-sitter grammar it follows) rejects. They are not valid Java: `this(...)` outside
 /// a constructor, and annotations mixing positional and named arguments.
 const KNOWN_FAILURES: &[&str] = &["B26952926", "B38352414", "palantir-expression-lambda-2"];
 

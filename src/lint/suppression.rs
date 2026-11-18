@@ -10,9 +10,10 @@
 
 use std::ops::Range;
 
-use tree_sitter::Node;
+use crate::ast::{EnumConstant, K, LitKind, Mods, Tree, VarDecl};
 
-use super::{Diagnostic, Rule, for_each_node, source};
+use super::tree::{Tokens, for_each_descendant};
+use super::{Diagnostic, Rule};
 
 const IGNORE_COMMENT: &str = "jtk:ignore";
 const NOPMD_COMMENT: &str = "NOPMD";
@@ -32,18 +33,22 @@ enum LineSuppression {
 }
 
 impl Suppressions {
-    pub fn find(root: &Node, text: &str) -> Suppressions {
+    pub fn find(unit: &Tree, text: &str, tokens: &Tokens) -> Suppressions {
         let line_starts = crate::newlines::line_offsets(text);
         let mut suppressions = Suppressions { line_starts, lines: Vec::new(), declarations: Vec::new() };
         // Most files suppress nothing; finding that in the text is much cheaper than walking the tree.
-        if !(text.contains(IGNORE_COMMENT) || text.contains(NOPMD_COMMENT) || text.contains("SuppressWarnings")) {
-            return suppressions;
+        if text.contains(IGNORE_COMMENT) || text.contains(NOPMD_COMMENT) {
+            for comment in tokens.comments() {
+                suppressions.add_comment(comment, text);
+            }
         }
-        for_each_node(root, |node| match node.kind() {
-            "line_comment" | "block_comment" => suppressions.add_comment(node, text),
-            "annotation" => suppressions.add_annotation(node, text),
-            _ => {}
-        });
+        if text.contains("SuppressWarnings") {
+            suppressions.add_declaration(unit, text);
+            for_each_descendant(unit, &mut |tree, _| {
+                suppressions.add_declaration(tree, text);
+                true
+            });
+        }
         suppressions
     }
 
@@ -60,8 +65,8 @@ impl Suppressions {
         self.line_starts.partition_point(|&start| start <= offset) - 1
     }
 
-    fn add_comment(&mut self, comment: &Node, text: &str) {
-        let content = source(comment, text);
+    fn add_comment(&mut self, comment: Range<usize>, text: &str) {
+        let content = &text[comment.clone()];
         let suppression = if let Some(index) = content.find(IGNORE_COMMENT) {
             ignore_comment(&content[index + IGNORE_COMMENT.len()..])
         } else if content.contains(NOPMD_COMMENT) {
@@ -69,24 +74,69 @@ impl Suppressions {
         } else {
             return;
         };
-        self.lines.push((self.line(comment.start_byte()), suppression));
+        self.lines.push((self.line(comment.start), suppression));
     }
 
-    fn add_annotation(&mut self, annotation: &Node, text: &str) {
-        let Some(name) = annotation.child_by_field_name("name") else { return };
-        if !source(&name, text).ends_with("SuppressWarnings") {
-            return;
-        }
-        let modifiers = annotation.parent().filter(|p| p.kind() == "modifiers");
-        let Some(declaration) = modifiers.and_then(|m| m.parent()) else { return };
-        let mut strings = Vec::new();
-        for_each_node(annotation, |node| {
-            if node.kind() == "string_literal" {
-                strings.push(source(node, text).trim_matches('"').to_string());
+    /// Adds the `@SuppressWarnings` of the declarations in `tree` that are not trees of their own: parameters,
+    /// catch parameters, enum constants and the like, or of `tree` itself.
+    fn add_declaration(&mut self, tree: &Tree, text: &str) {
+        match &tree.kind {
+            K::Class(class) => {
+                self.add_modifiers(&class.mods, tree.start..tree.end, text);
+                class.record_components.iter().for_each(|v| self.add_var(v, text));
+                let constants = &class.enum_constants;
+                for (i, constant) in constants.iter().enumerate() {
+                    let end = constants
+                        .get(i + 1)
+                        .map_or_else(|| enum_constants_end(class.members.first(), tree), |c| c.mods.start);
+                    self.add_enum_constant(constant, end, text);
+                }
             }
-        });
-        self.declarations.push((declaration.byte_range(), strings));
+            K::Method(method) => {
+                self.add_modifiers(&method.mods, tree.start..tree.end, text);
+                method.params.iter().for_each(|v| self.add_var(v, text));
+            }
+            K::Vars(vars) => {
+                if let Some(first) = vars.first() {
+                    self.add_modifiers(&first.mods, tree.start..tree.end, text);
+                }
+            }
+            K::Var(v) | K::BindingPattern { var: v } | K::ForEach { var: v, .. } => self.add_var(v, text),
+            K::Lambda { params, .. } => params.iter().for_each(|v| self.add_var(v, text)),
+            K::Try { catches, .. } => catches.iter().for_each(|c| self.add_var(&c.param, text)),
+            _ => {}
+        }
     }
+
+    fn add_var(&mut self, var: &VarDecl, text: &str) {
+        self.add_modifiers(&var.mods, var.start..var.end, text);
+    }
+
+    fn add_enum_constant(&mut self, constant: &EnumConstant, end: usize, text: &str) {
+        self.add_modifiers(&constant.mods, constant.mods.start..end, text);
+    }
+
+    fn add_modifiers(&mut self, mods: &Mods, declaration: Range<usize>, text: &str) {
+        for annotation in &mods.annotations {
+            let K::Annotation { ty, .. } = &annotation.kind else { continue };
+            if !text[ty.start..ty.end].ends_with("SuppressWarnings") {
+                continue;
+            }
+            let mut strings = Vec::new();
+            for_each_descendant(annotation, &mut |tree, _| {
+                if matches!(tree.kind, K::Literal(LitKind::String)) {
+                    strings.push(text[tree.start..tree.end].trim_matches('"').to_string());
+                }
+                true
+            });
+            self.declarations.push((declaration.clone(), strings));
+        }
+    }
+}
+
+/// Where the last enum constant ends: before the first member, or at the end of the enum.
+fn enum_constants_end(first_member: Option<&Tree>, class: &Tree) -> usize {
+    first_member.map_or(class.end, |m| m.start)
 }
 
 /// Parses what follows `jtk:ignore`: `[S001, B003]` names codes, anything else suppresses all rules.

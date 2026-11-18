@@ -232,7 +232,7 @@ pub fn remove_unused_imports(contents: &str) -> String {
 /// (whose syntax tree is already cached) and applied to the formatted output with [`remove_imports`].
 pub fn used_import_names(source: &str) -> Option<HashSet<String>> {
     // Syntax errors are reported by the formatter.
-    let unit = crate::parser::parse_cached(source)?;
+    let unit = crate::parser::parse_cached(source).ok()?;
     Some(used_import_names_in(&unit, source))
 }
 

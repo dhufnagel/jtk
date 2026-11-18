@@ -266,7 +266,7 @@ fn strip_indent(s: &str) -> String {
 
 fn reflow_replacements(column_limit: usize, input: &str) -> Replacements {
     // Syntax errors are reported by the formatter.
-    let Some(unit) = crate::parser::parse_cached(input) else {
+    let Ok(unit) = crate::parser::parse_cached(input) else {
         return Vec::new();
     };
     let reflower = Reflower {

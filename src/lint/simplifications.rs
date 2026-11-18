@@ -23,7 +23,7 @@ mod unnecessary_semicolon;
 
 use std::ops::Range;
 
-use super::{Check, Edit, Rule, syntax};
+use super::{Edit, Rule};
 
 use crate::ast::Tag;
 
@@ -93,9 +93,6 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::ExpressionLambda, &[Tag::Lambda], expression_lambda::check),
 ];
 
-/// The checks on tree-sitter's syntax tree: none, all rules of the group check the AST.
-pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[];
-
 /// The range that removes a token or annotation together with the whitespace after it on the same line.
 fn removal_range(range: Range<usize>, text: &str) -> Range<usize> {
     let trailing = text[range.end..].len() - text[range.end..].trim_start_matches([' ', '\t']).len();
@@ -104,5 +101,5 @@ fn removal_range(range: Range<usize>, text: &str) -> Range<usize> {
 
 /// The edit that removes a statement: its whole line if nothing else is on it, otherwise with the spaces after it.
 fn line_removal(range: Range<usize>, text: &str) -> Edit {
-    Edit::new(syntax::span_removal_range(range, text), "")
+    Edit::new(super::tree::span_removal_range(range, text), "")
 }

@@ -31,7 +31,7 @@ pub fn fix_with(text: &str, settings: &Settings, unsafe_fixes: bool) -> Result<S
 /// Applies the fix of one violation.
 pub fn apply_fix(text: &str, diagnostic: &Diagnostic) -> String {
     let mut edits: Vec<&Edit> = diagnostic.fix.iter().collect();
-    edits.sort_by_key(|e| e.range.start);
+    edits.sort_by_key(|e| (e.range.start, e.range.end));
     apply(text, &edits)
 }
 
@@ -39,14 +39,22 @@ pub fn apply_fix(text: &str, diagnostic: &Diagnostic) -> String {
 fn non_overlapping_edits(diagnostics: &[Diagnostic]) -> Vec<&Edit> {
     let mut accepted: Vec<&Edit> = Vec::new();
     for diagnostic in diagnostics {
-        let overlaps =
-            |edit: &Edit| accepted.iter().any(|a| edit.range.start < a.range.end && a.range.start < edit.range.end);
+        let overlaps = |edit: &Edit| accepted.iter().any(|a| conflict(edit, a));
         if !diagnostic.fix.iter().any(overlaps) {
             accepted.extend(&diagnostic.fix);
         }
     }
-    accepted.sort_by_key(|e| e.range.start);
+    // An insertion goes before a replacement starting at the same position (`final` before a type that becomes `var`).
+    accepted.sort_by_key(|e| (e.range.start, e.range.end));
     accepted
+}
+
+/// Whether two edits overlap: their ranges intersect, or one inserts at the start or within the range the other
+/// replaces (`final ` before a declaration that another fix replaces would end up in front of the replacement).
+fn conflict(a: &Edit, b: &Edit) -> bool {
+    let inserts_into =
+        |i: &Edit, r: &Edit| i.range.is_empty() && r.range.start <= i.range.start && i.range.start < r.range.end;
+    a.range.start < b.range.end && b.range.start < a.range.end || inserts_into(a, b) || inserts_into(b, a)
 }
 
 /// Applies edits sorted by position that do not overlap. A replacement that would join two words (`case(1)` to

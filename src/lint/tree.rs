@@ -1,5 +1,6 @@
-//! Checks on the javac-shaped AST of [`crate::ast`], which the hand-written parser builds several times faster than
-//! tree-sitter parses. Rules move here from the tree-sitter checks one by one.
+//! The checks of all rules run on the javac-shaped AST of [`crate::ast`] that the hand-written parser builds, with
+//! the file's tokens and comments for what the tree leaves out. This module walks the tree and holds what the
+//! checks share.
 
 use std::cell::OnceCell;
 use std::ops::Range;
@@ -146,13 +147,34 @@ pub(super) fn check<'t>(
     walk(unit, context, &by_tag, diagnostics);
 }
 
-fn walk<'t>(tree: &'t Tree, context: &mut Context<'t>, checks: &[Vec<TreeCheck>], diagnostics: &mut Vec<Diagnostic>) {
-    for check in &checks[tree.tag() as usize] {
-        check(tree, context, diagnostics);
+/// Runs the checks on `root` and the trees below it, in document order. Iterative, so that deeply nested code (long
+/// chains of `+`) cannot overflow the stack.
+fn walk<'t>(root: &'t Tree, context: &mut Context<'t>, checks: &[Vec<TreeCheck>], diagnostics: &mut Vec<Diagnostic>) {
+    let children = |tree: &'t Tree| {
+        let mut children = Vec::new();
+        tree.for_each_child(&mut |child| children.push(child));
+        children.into_iter()
+    };
+    for check in &checks[root.tag() as usize] {
+        check(root, context, diagnostics);
     }
-    context.ancestors.push(tree);
-    tree.for_each_child(&mut |child| walk(child, context, checks, diagnostics));
-    context.ancestors.pop();
+    context.ancestors.push(root);
+    let mut stack = vec![children(root)];
+    while let Some(siblings) = stack.last_mut() {
+        match siblings.next() {
+            Some(tree) => {
+                for check in &checks[tree.tag() as usize] {
+                    check(tree, context, diagnostics);
+                }
+                context.ancestors.push(tree);
+                stack.push(children(tree));
+            }
+            None => {
+                stack.pop();
+                context.ancestors.pop();
+            }
+        }
+    }
 }
 
 /// The modifier keywords of a declaration (`public`, `static`, `non-sealed`, ...) with their ranges, in order:
@@ -316,4 +338,18 @@ pub(super) fn in_type(root: &Tree, path: &[&Tree]) -> bool {
         parent = child;
     }
     in_type
+}
+
+/// The range that removes a span of source, such as a declaration with its leading comments: its whole lines if
+/// nothing else is on them, otherwise the span with the spaces after it.
+pub(super) fn span_removal_range(span: Range<usize>, text: &str) -> Range<usize> {
+    let line_start = text[..span.start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = text[span.end..].find('\n').map_or(text.len(), |i| span.end + i + 1);
+    let alone = text[line_start..span.start].trim().is_empty() && text[span.end..line_end].trim().is_empty();
+    if alone {
+        line_start..line_end
+    } else {
+        let trailing = text[span.end..].len() - text[span.end..].trim_start_matches([' ', '\t']).len();
+        span.start..span.end + trailing
+    }
 }

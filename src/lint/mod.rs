@@ -1,4 +1,4 @@
-//! The linter: reports rule violations found in the tree-sitter syntax tree.
+//! The linter: reports rule violations found in the syntax tree of the hand-written parser.
 //!
 //! Rules cover what the formatter does not: layout is left to `jtk` formatting (see `docs/regel-analyse.md`).
 
@@ -12,15 +12,11 @@ mod naming;
 mod options;
 mod simplifications;
 mod suppression;
-mod syntax;
 mod tree;
 
 use std::path::Path;
 
-use tree_sitter::Node;
-
 use crate::formatter::FormatError;
-use syntax::source;
 
 /// Defines the rules with their code and the equivalent Checkstyle checks and PMD rules, whose suppressions also
 /// apply to them. The PMD names are those of PMD 7.29, including the deprecated names PMD still accepts.
@@ -329,102 +325,13 @@ pub fn lint(text: &str, selection: &Selection) -> Result<Vec<Diagnostic>, Format
 /// Like [`lint`] with the given rule parameters, and also checks the rules about the file's path (if known), such
 /// as whether its name matches the type it declares.
 pub fn lint_file(text: &str, path: Option<&Path>, settings: &Settings) -> Result<Vec<Diagnostic>, FormatError> {
-    let tree = crate::parse::parse(text).ok_or_else(|| FormatError::new("parse failed"))?;
-    let root = tree.root_node();
-    if root.has_error() {
-        let error = crate::ast::first_error(&root);
-        return Err(FormatError::at_offset(text, error.start_byte(), "syntax error"));
-    }
-    let mut diagnostics = Vec::new();
-    let checks = checks_by_kind(&root.language(), &settings.selection);
-    for_each_node(&root, |node| {
-        if let Some(checks) = checks.get(usize::from(node.kind_id())) {
-            for check in checks {
-                match check {
-                    AnyCheck::Plain(check) => check(node, text, &mut diagnostics),
-                    AnyCheck::Configured(check) => check(node, text, &settings.options, &mut diagnostics),
-                }
-            }
-        }
-    });
     let unit = crate::parser::parse_cached(text)
-        .map_or_else(|| crate::ast::Converter { src: text }.compilation_unit(&root).map(std::rc::Rc::new), Ok)?;
+        .map_err(|error| FormatError::at_offset(text, error.offset, "syntax error"))?;
+    let mut diagnostics = Vec::new();
     let mut context = tree::Context::new(text, &settings.options, path);
     tree::check(&unit, &mut context, &settings.selection, &mut diagnostics);
-    if let Some(path) = path {
-        for (rule, check) in design::FILE_CHECKS {
-            if settings.selection.includes(*rule) {
-                check(&root, text, path, &mut diagnostics);
-            }
-        }
-    }
-    let suppressions = suppression::Suppressions::find(&root, text);
+    let suppressions = suppression::Suppressions::find(&unit, text, context.tokens());
     diagnostics.retain(|d| !suppressions.suppresses(d));
     diagnostics.sort_by_key(|d| d.offset);
     Ok(diagnostics)
-}
-
-/// Calls `f` for every node in document order. Iterative, so that deeply nested code cannot overflow the stack.
-fn for_each_node<'t>(root: &Node<'t>, mut f: impl FnMut(&Node<'t>)) {
-    let mut cursor = root.walk();
-    loop {
-        f(&cursor.node());
-        if cursor.goto_first_child() || cursor.goto_next_sibling() {
-            continue;
-        }
-        while !cursor.goto_next_sibling() {
-            if !cursor.goto_parent() {
-                return;
-            }
-        }
-    }
-}
-
-type Check = fn(&Node, &str, &mut Vec<Diagnostic>);
-
-/// The check of a rule with parameters.
-type ConfiguredCheck = fn(&Node, &str, &RuleOptions, &mut Vec<Diagnostic>);
-
-#[derive(Clone, Copy)]
-enum AnyCheck {
-    Plain(Check),
-    Configured(ConfiguredCheck),
-}
-
-/// A check of the whole compilation unit (the `program` node) against the file's path.
-type FileCheck = fn(&Node, &str, &Path, &mut Vec<Diagnostic>);
-
-/// The groups' checks: each rule with the kinds of nodes it checks.
-const CHECKS: &[&[(Rule, &[&str], Check)]] =
-    &[imports::CHECKS, bugs::CHECKS, simplifications::CHECKS, modernization::CHECKS, naming::CHECKS, design::CHECKS];
-
-/// The groups' checks of rules with parameters.
-const CONFIGURED_CHECKS: &[&[(Rule, &[&str], ConfiguredCheck)]] = &[
-    imports::CONFIGURED_CHECKS,
-    bugs::CONFIGURED_CHECKS,
-    naming::CONFIGURED_CHECKS,
-    design::CONFIGURED_CHECKS,
-    complexity::CONFIGURED_CHECKS,
-];
-
-/// The checks of the selected rules, indexed by the id of the node kind they check.
-fn checks_by_kind(language: &tree_sitter::Language, selection: &Selection) -> Vec<Vec<AnyCheck>> {
-    let plain = CHECKS.iter().copied().flatten().map(|(rule, kinds, check)| (*rule, *kinds, AnyCheck::Plain(*check)));
-    let configured = CONFIGURED_CHECKS
-        .iter()
-        .copied()
-        .flatten()
-        .map(|(rule, kinds, check)| (*rule, *kinds, AnyCheck::Configured(*check)));
-    let mut checks: Vec<Vec<AnyCheck>> = vec![Vec::new(); language.node_kind_count()];
-    for (rule, kinds, check) in plain.chain(configured) {
-        if !selection.includes(rule) {
-            continue;
-        }
-        for kind in kinds {
-            let id = language.id_for_node_kind(kind, true);
-            assert!(id != 0, "unknown node kind {kind}");
-            checks[usize::from(id)].push(check);
-        }
-    }
-    checks
 }

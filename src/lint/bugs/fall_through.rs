@@ -9,8 +9,6 @@ use crate::ast::{Case, CaseKind, K, Tree};
 use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Rule};
 
-pub(crate) use super::fall_through_cst::ends_group;
-
 /// Checkstyle's default relief pattern `falls?[ -]?thr(u|ough)`, spelled out.
 const RELIEF_COMMENTS: &[&str] = &[
     "fallthru",

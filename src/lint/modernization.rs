@@ -18,7 +18,7 @@ mod unnamed_variable;
 mod use_var;
 mod when_guard;
 
-use super::{Check, Rule};
+use super::Rule;
 use crate::ast::Tag;
 
 /// The checks on the AST, with the kinds of trees each checks.
@@ -40,7 +40,4 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::UseVar, &[Tag::Vars], use_var::check),
     (Rule::EnhancedFor, &[Tag::For], enhanced_for::check),
     (Rule::FinalField, &[Tag::CompilationUnit], final_field::check),
-];
-
-pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
 ];

@@ -57,7 +57,7 @@ fn missing_braces() {
 fn syntax_error() {
     assert_eq!(
         lint("class A { void f( }", &Selection::default()).unwrap_err().to_string(),
-        "1:11: error: syntax error"
+        "1:19: error: syntax error"
     );
 }
 

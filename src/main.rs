@@ -19,15 +19,18 @@ fn main() -> ExitCode {
     ExitCode::from(code as u8)
 }
 
-/// Prints the tree-sitter syntax tree of stdin (for debugging the parser adapter).
+/// Prints the syntax tree of stdin (for debugging the parser).
 fn debug_tree() -> ExitCode {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).unwrap();
-    match jtk::parse::parse(&input) {
-        Some(tree) => {
-            println!("{}", tree.root_node().to_sexp());
+    match jtk::parser::parse(&input) {
+        Ok(tree) => {
+            println!("{tree:#?}");
             ExitCode::SUCCESS
         }
-        None => ExitCode::FAILURE,
+        Err(error) => {
+            eprintln!("syntax error at byte {}", error.offset);
+            ExitCode::FAILURE
+        }
     }
 }
