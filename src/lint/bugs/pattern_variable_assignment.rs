@@ -11,119 +11,119 @@
 //! Checkstyle only finds one assignment per parent node, so of `c ? (s = a) : (s = b)` only the first; jtk reports
 //! both.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{for_each_descendant, is_comment, named_children, source};
+use crate::ast::{CaseKind, K, Tree};
+use crate::lint::tree::{Context, for_each_descendant};
 use crate::lint::{Diagnostic, Rule};
 
-/// The nodes that start a scope of their own.
-const SCOPES: &[&str] = &["if_statement", "ternary_expression"];
-
-pub fn check(node: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if node.kind() == "ternary_expression" {
-        check_scope(&named_children(node), &[*node], text, diagnostics);
-        return;
-    }
-    let condition = node.child_by_field_name("condition");
-    let consequence = node.child_by_field_name("consequence");
-    let then_scope: Vec<Node> = condition.into_iter().chain(consequence).collect();
-    let names = pattern_variables(&then_scope, text);
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let (cond, then, alternative) = match &tree.kind {
+        K::Conditional { cond, then, else_ } => {
+            check_scope(&[cond, then, else_], &[tree], diagnostics);
+            return;
+        }
+        K::If { cond, then, else_ } => (cond, then, else_),
+        _ => return,
+    };
+    let names = pattern_variables(&[cond, then]);
     if !names.is_empty() {
-        let mut branches: Vec<Node> = consequence.into_iter().collect();
-        branches.extend(following_statements(node));
-        report_assignments(&branches, &names, text, diagnostics);
+        let mut branches: Vec<&Tree> = vec![then];
+        branches.extend(following_statements(tree, context));
+        report_assignments(&branches, &names, diagnostics);
     }
-    if let Some(alternative) = node.child_by_field_name("alternative") {
-        check_scope(&[alternative], &[alternative], text, diagnostics);
+    if let Some(alternative) = alternative {
+        check_scope(&[alternative], &[alternative], diagnostics);
     }
 }
 
-fn check_scope(scope: &[Node], branches: &[Node], text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let names = pattern_variables(scope, text);
+fn check_scope(scope: &[&Tree], branches: &[&Tree], diagnostics: &mut Vec<Diagnostic>) {
+    let names = pattern_variables(scope);
     if !names.is_empty() {
-        report_assignments(branches, &names, text, diagnostics);
+        report_assignments(branches, &names, diagnostics);
     }
 }
 
-/// The names of the variables of the `instanceof` patterns in the nodes (the parts of a scope), outside nested
+/// Whether the tree starts a scope of its own.
+fn is_scope(tree: &Tree) -> bool {
+    matches!(tree.kind, K::If { .. } | K::Conditional { .. })
+}
+
+/// The names of the variables of the `instanceof` patterns in the trees (the parts of a scope), outside nested
 /// scopes.
-fn pattern_variables<'a>(nodes: &[Node], text: &'a str) -> Vec<&'a str> {
+fn pattern_variables<'t>(trees: &[&'t Tree]) -> Vec<&'t str> {
     let mut names = Vec::new();
-    for node in nodes {
-        if SCOPES.contains(&node.kind()) {
+    for &tree in trees {
+        if is_scope(tree) {
             continue;
         }
-        let mut visit = |n: &Node| {
-            if n.kind() == "instanceof_expression" {
-                if let Some(name) = n.child_by_field_name("name") {
-                    names.push(source(&name, text));
-                } else if let Some(pattern) = n.child_by_field_name("pattern") {
-                    record_pattern_variables(&pattern, text, &mut names);
-                }
+        let mut visit = |t: &'t Tree| {
+            if let K::InstanceOf { target, .. } = &t.kind {
+                pattern_names(target, &mut names);
             }
         };
-        visit(node);
-        for_each_descendant(node, SCOPES, |n| {
-            if !SCOPES.contains(&n.kind()) {
-                visit(n);
+        visit(tree);
+        for_each_descendant(tree, &mut |t, _| {
+            if is_scope(t) {
+                return false;
             }
+            visit(t);
+            true
         });
     }
     names
 }
 
-fn record_pattern_variables<'a>(pattern: &Node, text: &'a str, names: &mut Vec<&'a str>) {
-    for child in named_children(pattern) {
-        match child.kind() {
-            "record_pattern_body" | "record_pattern" => record_pattern_variables(&child, text, names),
-            "record_pattern_component" => {
-                let parts = named_children(&child);
-                match parts.iter().find(|p| p.kind() == "record_pattern") {
-                    Some(nested) => record_pattern_variables(nested, text, names),
-                    None => names.extend(parts.iter().filter(|p| p.kind() == "identifier").map(|p| source(p, text))),
-                }
-            }
-            _ => {}
-        }
+/// The names of the variables of a pattern.
+fn pattern_names<'t>(pattern: &'t Tree, names: &mut Vec<&'t str>) {
+    match &pattern.kind {
+        K::BindingPattern { var } => names.push(&var.name),
+        K::RecordPattern { nested, .. } => nested.iter().for_each(|n| pattern_names(n, names)),
+        _ => {}
     }
 }
 
 /// The expression, `return` and `if` statements directly after the statement, up to any other statement (also an
-/// empty one, `;`).
-fn following_statements<'t>(statement: &Node<'t>) -> Vec<Node<'t>> {
-    let mut statements = Vec::new();
-    let mut next = statement.next_sibling();
-    while let Some(sibling) = next {
-        match sibling.kind() {
-            "expression_statement" | "return_statement" | "if_statement" => statements.push(sibling),
-            _ if is_comment(&sibling) => {}
-            _ => break,
-        }
-        next = sibling.next_sibling();
-    }
-    statements
+/// empty one, `;`). Like tree-sitter's expression statements, a `switch` statement counts.
+fn following_statements<'t>(statement: &Tree, context: &Context<'t>) -> Vec<&'t Tree> {
+    let siblings: &[Tree] = match context.parent().map(|p| &p.kind) {
+        Some(K::Block { stmts, .. }) => stmts,
+        Some(K::Switch { cases, .. } | K::SwitchExpr { cases, .. }) => cases
+            .iter()
+            .filter(|c| c.kind == CaseKind::Statement)
+            .map(|c| &c.stmts[..])
+            .find(|stmts| stmts.iter().any(|s| std::ptr::eq(s, statement)))
+            .unwrap_or_default(),
+        _ => &[],
+    };
+    siblings
+        .iter()
+        .skip_while(|s| !std::ptr::eq(*s, statement))
+        .skip(1)
+        .take_while(|s| matches!(s.kind, K::ExprStmt(_) | K::Switch { .. } | K::Return(_) | K::If { .. }))
+        .collect()
 }
 
-fn report_assignments(branches: &[Node], names: &[&str], text: &str, diagnostics: &mut Vec<Diagnostic>) {
+fn report_assignments(branches: &[&Tree], names: &[&str], diagnostics: &mut Vec<Diagnostic>) {
     for branch in branches {
-        let mut visit = |n: &Node| {
-            let target = match n.kind() {
-                "assignment_expression" => n.child_by_field_name("left"),
-                "update_expression" => n.named_children(&mut n.walk()).find(|c| !is_comment(c)),
-                _ => None,
+        let mut visit = |tree: &Tree| {
+            let target = match &tree.kind {
+                K::Assign { lhs, .. } => lhs,
+                K::Unary { op, expr, .. } if op == "++" || op == "--" => expr,
+                _ => return,
             };
-            if let Some(target) = target
-                && target.kind() == "identifier"
-                && names.contains(&source(&target, text))
+            if let K::Ident(name) = &target.kind
+                && names.contains(&name.as_str())
             {
                 diagnostics.push(Diagnostic::new(
                     Rule::PatternVariableAssignment,
-                    target.start_byte(),
-                    format!("Assignment of pattern variable '{}' is not allowed", source(&target, text)),
+                    target.start,
+                    format!("Assignment of pattern variable '{name}' is not allowed"),
                 ));
             }
         };
         visit(branch);
-        for_each_descendant(branch, &[], &mut visit);
+        for_each_descendant(branch, &mut |t, _| {
+            visit(t);
+            true
+        });
     }
 }

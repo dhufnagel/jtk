@@ -4,13 +4,15 @@
 //! Like PMD, only string literals and text blocks are checked, not character literals, and each suspicious escape is
 //! reported.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::source;
+use crate::ast::{K, LitKind, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(literal: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let code = source(literal, text).as_bytes();
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if !matches!(tree.kind, K::Literal(LitKind::String)) {
+        return;
+    }
+    let code = context.source(tree).as_bytes();
     if code.len() < 2 || !code.contains(&b'\\') {
         return;
     }
@@ -32,7 +34,7 @@ pub fn check(literal: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
                 String::from_utf8_lossy(octal),
                 char::from(digit[0])
             );
-            diagnostics.push(Diagnostic::new(Rule::SuspiciousOctalEscape, literal.start_byte(), message));
+            diagnostics.push(Diagnostic::new(Rule::SuspiciousOctalEscape, tree.start, message));
         }
     }
 }

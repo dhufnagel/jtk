@@ -6,64 +6,75 @@
 //! with these types in the enclosing code, casts, arithmetic with such an operand, and calls of `doubleValue()`,
 //! `floatValue()`, `Double.parseDouble` and the `Math` functions that only return `double`.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{declared_type, named_children, operator, source, strip_parentheses};
+use super::shared_b::declared_type;
+use crate::ast::{K, LitKind, Tree};
+use crate::lint::tree::{Context, path_to, strip_parens};
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(creation: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let is_big_decimal = creation
-        .child_by_field_name("type")
-        .is_some_and(|t| matches!(source(&t, text), "BigDecimal" | "java.math.BigDecimal"));
-    if !is_big_decimal {
+pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
+    let K::NewClass { ident, args, .. } = &tree.kind else { return };
+    if !matches!(context.source(ident), "BigDecimal" | "java.math.BigDecimal") {
         return;
     }
-    let arguments = creation.child_by_field_name("arguments").map(|a| named_children(&a)).unwrap_or_default();
-    if matches!(arguments.as_slice(), [argument] if is_floating_value(argument, text)) {
+    let floating = Floating { creation: tree, context };
+    if matches!(args.as_slice(), [argument] if floating.is_value(argument)) {
         let message = "BigDecimal created from a double; use a String or BigDecimal.valueOf";
-        diagnostics.push(Diagnostic::new(Rule::BigDecimalDouble, creation.start_byte(), message));
+        diagnostics.push(Diagnostic::new(Rule::BigDecimalDouble, tree.start, message));
     }
 }
 
-/// Whether the expression's type is known to be `double` or `float`, or a wrapper of them.
-fn is_floating_value(expression: &Node, text: &str) -> bool {
-    let expression = strip_parentheses(expression);
-    match expression.kind() {
-        _ if is_floating_literal(&expression, text) => true,
-        "hex_floating_point_literal" => true,
-        "unary_expression" => {
-            matches!(operator(&expression, text), "-" | "+")
-                && expression.child_by_field_name("operand").is_some_and(|o| is_floating_value(&o, text))
-        }
-        "cast_expression" => expression.child_by_field_name("type").is_some_and(|t| is_floating_type(&t, text)),
-        "identifier" => {
-            declared_type(&expression, source(&expression, text), text).is_some_and(|t| is_floating_type(&t, text))
-        }
-        "binary_expression" => {
-            let (Some(left), Some(right)) =
-                (expression.child_by_field_name("left"), expression.child_by_field_name("right"))
-            else {
-                return false;
-            };
-            match operator(&expression, text) {
+/// Finds out whether expressions in the arguments of a creation are floating.
+struct Floating<'a, 't> {
+    creation: &'t Tree,
+    context: &'a Context<'t>,
+}
+
+impl Floating<'_, '_> {
+    /// Whether the expression's type is known to be `double` or `float`, or a wrapper of them.
+    fn is_value(&self, expression: &Tree) -> bool {
+        let text = self.context.text;
+        let expression = strip_parens(expression);
+        match &expression.kind {
+            K::Literal(LitKind::Float | LitKind::Double) => true,
+            K::Unary { op, expr, .. } if op == "-" || op == "+" => self.is_value(expr),
+            K::Cast { ty, .. } => is_floating_type(&text[ty.start..ty.end]),
+            K::Ident(name) => self.declared_type(expression, name).is_some_and(is_floating_type),
+            K::Binary { op, lhs, rhs } => match op.as_str() {
                 // Both operands are numbers, so one floating operand makes the result floating.
-                "-" | "*" | "/" | "%" => is_floating_value(&left, text) || is_floating_value(&right, text),
+                "-" | "*" | "/" | "%" => self.is_value(lhs) || self.is_value(rhs),
                 // `+` may concatenate strings.
-                "+" => {
-                    is_floating_value(&left, text) && is_number(&right, text)
-                        || is_number(&left, text) && is_floating_value(&right, text)
-                }
+                "+" => self.is_value(lhs) && self.is_number(rhs) || self.is_number(lhs) && self.is_value(rhs),
                 _ => false,
+            },
+            K::MethodInvocation { select, .. } => {
+                let (name, object) = match &select.kind {
+                    K::Ident(name) => (name.as_str(), None),
+                    K::MemberSelect { expr, name } => (name.as_str(), Some(&text[expr.start..expr.end])),
+                    _ => return false,
+                };
+                matches!(name, "doubleValue" | "floatValue")
+                    || matches!((object, name), (Some("Double"), "parseDouble") | (Some("Float"), "parseFloat"))
+                    || object == Some("Math") && MATH_DOUBLE_FUNCTIONS.contains(&name)
             }
+            _ => false,
         }
-        "method_invocation" => {
-            let name = expression.child_by_field_name("name").map_or("", |n| source(&n, text));
-            let object = expression.child_by_field_name("object").map(|o| source(&o, text));
-            matches!(name, "doubleValue" | "floatValue")
-                || matches!((object, name), (Some("Double"), "parseDouble") | (Some("Float"), "parseFloat"))
-                || object == Some("Math") && MATH_DOUBLE_FUNCTIONS.contains(&name)
-        }
-        _ => false,
+    }
+
+    /// Whether the expression is known to be a number: a numeric literal or a floating value. Like tree-sitter's
+    /// integer literals, a negative integer literal is not a literal.
+    fn is_number(&self, expression: &Tree) -> bool {
+        let expression = strip_parens(expression);
+        let is_integer = matches!(expression.kind, K::Literal(LitKind::Int | LitKind::Long))
+            && !self.context.source(expression).starts_with('-');
+        is_integer || self.is_value(expression)
+    }
+
+    /// The declared type of the variable that the identifier in the creation names.
+    fn declared_type(&self, identifier: &Tree, name: &str) -> Option<&str> {
+        let mut path = self.context.ancestors.clone();
+        path.push(self.creation);
+        path.extend(path_to(self.creation, identifier.start..identifier.end));
+        declared_type(&path, name, self.context.text)
     }
 }
 
@@ -96,25 +107,6 @@ const MATH_DOUBLE_FUNCTIONS: &[&str] = &[
     "toDegrees",
 ];
 
-/// Whether the expression is known to be a number: a numeric literal or a floating value.
-fn is_number(expression: &Node, text: &str) -> bool {
-    let expression = strip_parentheses(expression);
-    matches!(
-        expression.kind(),
-        "decimal_integer_literal" | "hex_integer_literal" | "octal_integer_literal" | "binary_integer_literal"
-    ) || is_floating_value(&expression, text)
-}
-
-fn is_floating_type(declared: &Node, text: &str) -> bool {
-    matches!(source(declared, text), "double" | "float" | "Double" | "Float" | "java.lang.Double" | "java.lang.Float")
-}
-
-fn is_floating_literal(argument: &Node, text: &str) -> bool {
-    match argument.kind() {
-        "decimal_floating_point_literal" => true,
-        "unary_expression" if matches!(operator(argument, text), "-" | "+") => {
-            argument.child_by_field_name("operand").is_some_and(|o| is_floating_literal(&o, text))
-        }
-        _ => false,
-    }
+fn is_floating_type(declared: &str) -> bool {
+    matches!(declared, "double" | "float" | "Double" | "Float" | "java.lang.Double" | "java.lang.Float")
 }

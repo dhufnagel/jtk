@@ -5,39 +5,37 @@
 //! text block), and only the first constant of a `case` is checked for `null` (`case null, default` but not
 //! `case "a", null`).
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{for_each_descendant, is_comment, source};
+use crate::ast::{K, LitKind, Tree};
+use crate::lint::tree::{Context, for_each_descendant};
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(switch: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(body) = switch.child_by_field_name("body") else { return };
-    let labels: Vec<Node> = body
-        .named_children(&mut body.walk())
-        .filter(|c| matches!(c.kind(), "switch_block_statement_group" | "switch_rule"))
-        .flat_map(|c| c.named_children(&mut c.walk()).filter(|l| l.kind() == "switch_label").collect::<Vec<_>>())
-        .filter(|l| l.child(0).is_some_and(|keyword| keyword.kind() == "case"))
-        .collect();
-    let has_null = labels
-        .iter()
-        .any(|l| l.named_children(&mut l.walk()).find(|c| !is_comment(c)).is_some_and(|c| c.kind() == "null_literal"));
-    if !has_null && labels.iter().any(|l| has_pattern(l) || has_string(l, text)) {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let (K::Switch { cases, .. } | K::SwitchExpr { cases, .. }) = &tree.kind else { return };
+    // The cases with `case` (not `default` alone).
+    let cases = || cases.iter().filter(|c| !c.is_default);
+    let has_null = cases().any(|c| c.labels.first().is_some_and(|l| matches!(l.kind, K::Literal(LitKind::Null))));
+    let has_reference = || {
+        cases().any(|c| {
+            c.labels.iter().any(|l| matches!(l.kind, K::BindingPattern { .. } | K::RecordPattern { .. }))
+                || c.labels.iter().chain(c.guard.as_deref()).any(|l| has_string(l, context.text))
+        })
+    };
+    if !has_null && has_reference() {
         diagnostics.push(Diagnostic::new(
             Rule::MissingNullCase,
-            switch.start_byte(),
+            tree.start,
             "Switch using reference types should have a null case",
         ));
     }
 }
 
-fn has_pattern(label: &Node) -> bool {
-    label.named_children(&mut label.walk()).any(|c| matches!(c.kind(), "pattern" | "type_pattern" | "record_pattern"))
-}
-
-fn has_string(label: &Node, text: &str) -> bool {
-    let mut found = false;
-    for_each_descendant(label, &[], |n| {
-        found |= n.kind() == "string_literal" && !source(n, text).starts_with("\"\"\"");
+/// Whether the tree is or contains a string literal (not a text block).
+fn has_string(tree: &Tree, text: &str) -> bool {
+    let is_string = |t: &Tree| matches!(t.kind, K::Literal(LitKind::String)) && !text[t.start..].starts_with("\"\"\"");
+    let mut found = is_string(tree);
+    for_each_descendant(tree, &mut |t, _| {
+        found = found || is_string(t);
+        !found
     });
     found
 }

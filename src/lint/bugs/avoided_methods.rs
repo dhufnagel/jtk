@@ -4,27 +4,31 @@
 //! As in Checkstyle, only the overloads without parameters count, in any type including interfaces, and the
 //! violation is reported where the declaration starts (at its annotations, if any).
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{is_comment, source};
+use crate::ast::{ClassKind, K, MethodDecl, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check_finalizer(method: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if is_parameterless(method, text, "finalize") {
-        diagnostics.push(Diagnostic::new(Rule::Finalizer, method.start_byte(), "Avoid using finalizer method"));
+pub fn check_finalizer(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if declared_method(tree, context).is_some_and(|m| is_parameterless(m, "finalize")) {
+        diagnostics.push(Diagnostic::new(Rule::Finalizer, tree.start, "Avoid using finalizer method"));
     }
 }
 
-pub fn check_clone(method: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if is_parameterless(method, text, "clone") {
-        diagnostics.push(Diagnostic::new(Rule::Clone, method.start_byte(), "Avoid using clone method"));
+pub fn check_clone(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if declared_method(tree, context).is_some_and(|m| is_parameterless(m, "clone")) {
+        diagnostics.push(Diagnostic::new(Rule::Clone, tree.start, "Avoid using clone method"));
     }
+}
+
+/// The method declared by the tree: not a constructor nor an element of an annotation type.
+pub(super) fn declared_method<'t>(tree: &'t Tree, context: &Context) -> Option<&'t MethodDecl> {
+    let K::Method(method) = &tree.kind else { return None };
+    let in_annotation_type =
+        context.parent().is_some_and(|p| matches!(&p.kind, K::Class(c) if c.kind == ClassKind::Annotation));
+    (method.ret.is_some() && !in_annotation_type).then_some(method)
 }
 
 /// Whether the method has the name and no parameters (a receiver parameter counts as one, as in Checkstyle).
-pub(super) fn is_parameterless(method: &Node, text: &str, name: &str) -> bool {
-    method.child_by_field_name("name").is_some_and(|n| source(&n, text) == name)
-        && method
-            .child_by_field_name("parameters")
-            .is_some_and(|p| !p.named_children(&mut p.walk()).any(|c| !is_comment(&c)))
+pub(super) fn is_parameterless(method: &MethodDecl, name: &str) -> bool {
+    method.name == name && method.params.is_empty() && method.receiver.is_none()
 }

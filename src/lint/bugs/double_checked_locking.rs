@@ -7,77 +7,96 @@
 //! points at the pattern (like Error Prone's DoubleCheckedLocking). PMD also requires a non-primitive return type and a
 //! single `return` of the field, which jtk does not: the unsafe publication does not depend on them.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{
-    NESTED_CODE, descendants, has_modifier, named_children, operator, source, strip_parentheses,
-};
+use super::shared_b::for_each_in_same_code;
+use crate::ast::{ClassKind, K, LitKind, Tree};
+use crate::lint::tree::{Context, has_modifier, strip_parens};
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(outer: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(field) = null_tested(outer, text) else { return };
-    let Some(consequence) = outer.child_by_field_name("consequence") else { return };
-    let inner_checks = descendants(&consequence, "synchronized_statement", NESTED_CODE)
-        .iter()
-        .flat_map(|s| descendants(s, "if_statement", NESTED_CODE))
-        .filter(|inner| null_tested(inner, text) == Some(field))
-        .any(|inner| assigns(&inner, field, text));
-    if inner_checks && is_non_volatile_field(outer, field, text) {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::If { then, .. } = &tree.kind else { return };
+    let Some(field) = null_tested(tree) else { return };
+    let mut inner_checks = false;
+    let mut visit = |synchronized: &Tree| {
+        if matches!(synchronized.kind, K::Synchronized { .. }) && !inner_checks {
+            for_each_in_same_code(synchronized, &mut |inner| {
+                inner_checks = inner_checks
+                    || matches!(inner.kind, K::If { .. }) && null_tested(inner) == Some(field) && assigns(inner, field);
+            });
+        }
+    };
+    for_each_in_same_code(then, &mut visit);
+    if inner_checks && is_non_volatile_field(context, field) {
         let message = format!("Double-checked locking on '{field}', which is not volatile");
-        diagnostics.push(Diagnostic::new(Rule::DoubleCheckedLocking, outer.start_byte(), message));
+        diagnostics.push(Diagnostic::new(Rule::DoubleCheckedLocking, tree.start, message));
     }
 }
 
 /// The field name `x` in an `if (x == null)` or `if (this.x == null)` condition, or its negation `!(x != null)`.
-fn null_tested<'a>(statement: &Node, text: &'a str) -> Option<&'a str> {
-    let mut condition = strip_parentheses(&statement.child_by_field_name("condition")?);
+fn null_tested(statement: &Tree) -> Option<&str> {
+    let K::If { cond, .. } = &statement.kind else { return None };
+    let mut condition = strip_parens(cond);
     let mut negated = false;
-    while condition.kind() == "unary_expression" && operator(&condition, text) == "!" {
-        condition = strip_parentheses(&condition.child_by_field_name("operand")?);
+    while let K::Unary { op, expr, .. } = &condition.kind
+        && op == "!"
+    {
+        condition = strip_parens(expr);
         negated = !negated;
     }
-    if operator(&condition, text) != if negated { "!=" } else { "==" } {
+    let K::Binary { op, lhs, rhs } = &condition.kind else { return None };
+    if op != if negated { "!=" } else { "==" } {
         return None;
     }
-    let left = strip_parentheses(&condition.child_by_field_name("left")?);
-    let right = strip_parentheses(&condition.child_by_field_name("right")?);
-    let tested = if right.kind() == "null_literal" {
+    let (left, right) = (strip_parens(lhs), strip_parens(rhs));
+    let is_null = |t: &Tree| matches!(t.kind, K::Literal(LitKind::Null));
+    let tested = if is_null(right) {
         left
-    } else if left.kind() == "null_literal" {
+    } else if is_null(left) {
         right
     } else {
         return None;
     };
-    field_name(&tested, text)
+    field_name(tested)
 }
 
-fn field_name<'a>(expression: &Node, text: &'a str) -> Option<&'a str> {
-    match expression.kind() {
-        "identifier" => Some(source(expression, text)),
-        "field_access" if expression.child_by_field_name("object").is_some_and(|o| o.kind() == "this") => {
-            Some(source(&expression.child_by_field_name("field")?, text))
-        }
+fn field_name(expression: &Tree) -> Option<&str> {
+    match &expression.kind {
+        K::Ident(name) if name != "this" && name != "super" => Some(name),
+        K::MemberSelect { expr, name } if matches!(&expr.kind, K::Ident(t) if t == "this") => Some(name),
         _ => None,
     }
 }
 
-fn assigns(statement: &Node, field: &str, text: &str) -> bool {
-    descendants(statement, "assignment_expression", NESTED_CODE)
-        .iter()
-        .any(|a| a.child_by_field_name("left").is_some_and(|l| field_name(&l, text) == Some(field)))
+fn assigns(statement: &Tree, field: &str) -> bool {
+    let mut found = false;
+    for_each_in_same_code(statement, &mut |tree| {
+        found = found || matches!(&tree.kind, K::Assign { lhs, .. } if field_name(lhs) == Some(field));
+    });
+    found
 }
 
-/// Whether `field` is declared in the class enclosing `node`, without `volatile`.
-fn is_non_volatile_field(node: &Node, field: &str, text: &str) -> bool {
-    let Some(class_body) = std::iter::successors(node.parent(), |n| n.parent()).find(|n| n.kind() == "class_body")
+/// Whether `field` is declared in the class enclosing the checked tree, without `volatile`.
+fn is_non_volatile_field(context: &Context, field: &str) -> bool {
+    let Some(members) =
+        context.ancestors.iter().rev().zip(context.ancestors.iter().rev().skip(1)).find_map(|(child, parent)| {
+            match &parent.kind {
+                K::Class(class) if matches!(class.kind, ClassKind::Class | ClassKind::Record) => {
+                    Some(&class.members[..])
+                }
+                K::Class(class) if class.kind == ClassKind::Enum => class
+                    .enum_constants
+                    .iter()
+                    .filter_map(|c| c.body.as_deref())
+                    .find(|b| b.iter().any(|m| std::ptr::eq(m, *child))),
+                K::NewClass { body: Some(body), .. } if body.iter().any(|m| std::ptr::eq(m, *child)) => Some(&body[..]),
+                _ => None,
+            }
+        })
     else {
         return false;
     };
-    let declaration = named_children(&class_body).into_iter().filter(|m| m.kind() == "field_declaration").find(|m| {
-        named_children(m)
-            .iter()
-            .filter(|d| d.kind() == "variable_declarator")
-            .any(|d| d.child_by_field_name("name").is_some_and(|n| source(&n, text) == field))
-    });
-    declaration.is_some_and(|d| !has_modifier(&d, text, "volatile"))
+    let declaration = members.iter().find(|m| matches!(&m.kind, K::Vars(vars) if vars.iter().any(|v| v.name == field)));
+    declaration.is_some_and(|d| {
+        let K::Vars(vars) = &d.kind else { return false };
+        !has_modifier(&vars[0].mods, context.text, context.tokens(), "volatile")
+    })
 }

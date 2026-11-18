@@ -4,34 +4,33 @@
 //! As in Checkstyle, `finalize` and methods annotated with `@Override` (whose signature the overridden method
 //! dictates) are not checked.
 
-use tree_sitter::Node;
-
 use super::illegal_catch::illegal_name;
-use crate::lint::syntax::{is_comment, modifiers, named_children, source};
-use crate::lint::{Diagnostic, Rule, RuleOptions};
+use crate::ast::{K, Tree};
+use crate::lint::tree::Context;
+use crate::lint::{Diagnostic, Rule};
 
-pub fn check(declaration: &Node, text: &str, options: &RuleOptions, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(throws) = named_children(declaration).into_iter().find(|c| c.kind() == "throws") else { return };
-    let is_finalize = declaration.child_by_field_name("name").is_some_and(|n| source(&n, text) == "finalize");
-    if is_finalize || has_override(declaration, text) {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Method(method) = &tree.kind else { return };
+    let text = context.text;
+    let has_override = || {
+        method.mods.annotations.iter().any(|a| {
+            matches!(&a.kind, K::Annotation { ty, .. } if matches!(&text[ty.start..ty.end], "Override" | "java.lang.Override"))
+        })
+    };
+    if method.throws.is_empty() || method.name == "finalize" || has_override() {
         return;
     }
-    for type_node in named_children(&throws).into_iter().filter(|c| !is_comment(c)) {
-        if let Some(name) = illegal_name(&type_node, text, &options.illegal_throws.illegal_class_names) {
+    for ty in &method.throws {
+        if let Some(name) = illegal_name(ty, text, &context.options.illegal_throws.illegal_class_names) {
             // Checkstyle reports a qualified name at its last dot.
-            let dot = type_node.children(&mut type_node.walk()).filter(|c| c.kind() == ".").last();
-            let offset = dot.map_or(type_node.start_byte(), |d| d.start_byte());
+            let dot = match &ty.kind {
+                K::MemberSelect { .. } => {
+                    context.tokens().in_range(ty.start..ty.end).filter(|t| &text[t.clone()] == ".").last()
+                }
+                _ => None,
+            };
+            let offset = dot.map_or(ty.start, |d| d.start);
             diagnostics.push(Diagnostic::new(Rule::IllegalThrows, offset, format!("Throwing '{name}' is not allowed")));
         }
     }
-}
-
-fn has_override(declaration: &Node, text: &str) -> bool {
-    modifiers(declaration).is_some_and(|m| {
-        named_children(&m).iter().any(|a| {
-            matches!(a.kind(), "marker_annotation" | "annotation")
-                && a.child_by_field_name("name")
-                    .is_some_and(|n| matches!(source(&n, text), "Override" | "java.lang.Override"))
-        })
-    })
 }

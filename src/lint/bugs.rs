@@ -26,6 +26,7 @@ mod modified_control_variable;
 mod null_check;
 mod parameter_assignment;
 mod pattern_variable_assignment;
+mod shared_b;
 pub(super) mod string_literal_equality;
 pub(super) mod unused_local_variable;
 mod unused_private_member;
@@ -57,27 +58,26 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::ParameterAssignment, &[Tag::Method, Tag::Lambda], parameter_assignment::check),
     (Rule::ModifiedControlVariable, &[Tag::For, Tag::ForEach], modified_control_variable::check),
     (Rule::JumbledIncrementer, &[Tag::For], jumbled_incrementer::check),
+    (Rule::NullCheck, &[Tag::Binary], null_check::check),
+    (Rule::BigDecimalDouble, &[Tag::NewClass], big_decimal_double::check),
+    (Rule::SuspiciousOctalEscape, &[Tag::Literal], suspicious_octal_escape::check),
+    (Rule::DoubleCheckedLocking, &[Tag::If], double_checked_locking::check),
+    (Rule::IllegalCatch, &[Tag::Try], illegal_catch::check),
+    (Rule::IllegalThrows, &[Tag::Method], illegal_throws::check),
+    (Rule::PrintStackTrace, &[Tag::MethodInvocation], print_stack_trace::check),
+    (Rule::LostCause, &[Tag::Throw], lost_cause::check),
+    (Rule::MissingSuperCall, &[Tag::Method], missing_super_call::check),
+    (Rule::DoubleBraceInitialization, &[Tag::NewClass], double_brace_initialization::check),
+    (Rule::UnusedPrivateMember, &[Tag::CompilationUnit], unused_private_member::check),
+    (Rule::UnusedParameter, &[Tag::Method], unused_parameter::check),
+    (Rule::PatternVariableAssignment, &[Tag::If, Tag::Conditional], pattern_variable_assignment::check),
+    (Rule::MissingNullCase, &[Tag::Switch, Tag::SwitchExpr], missing_null_case::check),
+    (Rule::Finalizer, &[Tag::Method], avoided_methods::check_finalizer),
+    (Rule::Clone, &[Tag::Method], avoided_methods::check_clone),
 ];
 
 pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
-    (Rule::NullCheck, &["binary_expression"], null_check::check),
-    (Rule::BigDecimalDouble, &["object_creation_expression"], big_decimal_double::check),
-    (Rule::DoubleCheckedLocking, &["if_statement"], double_checked_locking::check),
-    (Rule::UnusedPrivateMember, &["program"], unused_private_member::check),
-    (Rule::LostCause, &["throw_statement"], lost_cause::check),
-    (Rule::MissingSuperCall, &["method_declaration"], missing_super_call::check),
-    (Rule::DoubleBraceInitialization, &["object_creation_expression"], double_brace_initialization::check),
-    (Rule::PatternVariableAssignment, &["if_statement", "ternary_expression"], pattern_variable_assignment::check),
-    (Rule::MissingNullCase, &["switch_expression"], missing_null_case::check),
-    (Rule::Finalizer, &["method_declaration"], avoided_methods::check_finalizer),
-    (Rule::Clone, &["method_declaration"], avoided_methods::check_clone),
-    (Rule::SuspiciousOctalEscape, &["string_literal"], suspicious_octal_escape::check),
-    (Rule::PrintStackTrace, &["method_invocation"], print_stack_trace::check),
-    (Rule::UnusedParameter, &["method_declaration", "constructor_declaration"], unused_parameter::check),
 ];
 
 /// The checks of rules with parameters.
-pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[
-    (Rule::IllegalCatch, &["catch_clause"], illegal_catch::check),
-    (Rule::IllegalThrows, &["method_declaration", "constructor_declaration"], illegal_throws::check),
-];
+pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[];

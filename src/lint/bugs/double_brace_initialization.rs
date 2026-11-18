@@ -2,21 +2,23 @@
 //! (Checkstyle AvoidDoubleBraceInitialization, PMD DoubleBraceInitialization): it creates a class per use and keeps
 //! a reference to the enclosing instance.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::is_comment;
+use crate::ast::{K, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(creation: &Node, _text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(body) = creation.named_children(&mut creation.walk()).find(|c| c.kind() == "class_body") else {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::NewClass { ident, args, body: Some(members), .. } = &tree.kind else { return };
+    let Some(first) = members.first() else { return };
+    if !members.iter().all(|m| matches!(m.kind, K::Block { is_static: false, .. })) {
         return;
-    };
-    let members: Vec<Node> = body.named_children(&mut body.walk()).filter(|c| !is_comment(c)).collect();
-    if !members.is_empty() && members.iter().all(|m| m.kind() == "block") {
-        diagnostics.push(Diagnostic::new(
-            Rule::DoubleBraceInitialization,
-            body.start_byte(),
-            "Avoid double brace initialization",
-        ));
     }
+    // The body's brace is the first after the arguments.
+    let arguments_end = args.last().map_or(ident.end, |a| a.end);
+    let text = context.text;
+    let brace = context.tokens().in_range(arguments_end..first.start).find(|t| &text[t.clone()] == "{");
+    diagnostics.push(Diagnostic::new(
+        Rule::DoubleBraceInitialization,
+        brace.map_or(first.start, |b| b.start),
+        "Avoid double brace initialization",
+    ));
 }
