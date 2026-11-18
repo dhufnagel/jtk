@@ -26,7 +26,9 @@ const SERIALIZATION_METHODS: &[&str] =
     &["writeObject", "readObject", "readObjectNoData", "writeReplace", "readResolve"];
 
 pub fn check(program: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let names = UsedNames::find(program, text);
+    // Only needed for files with private members.
+    let names = std::cell::OnceCell::new();
+    let names = || names.get_or_init(|| UsedNames::find(program, text));
     let uses_lombok =
         named_children(program).iter().any(|c| c.kind() == "import_declaration" && source(c, text).contains("lombok."));
     let is_candidate = |member: &Node| has_modifier(member, text, "private") && !is_annotated(member);
@@ -37,7 +39,7 @@ pub fn check(program: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
             for (index, declarator) in declarators.iter().enumerate() {
                 let Some(name) = declarator.child_by_field_name("name") else { continue };
                 let field = source(&name, text);
-                if !names.variables.contains(field) && !SERIALIZATION_FIELDS.contains(&field) {
+                if !names().variables.contains(field) && !SERIALIZATION_FIELDS.contains(&field) {
                     let message = format!("Unused private field '{field}'");
                     let diagnostic = Diagnostic::new(Rule::UnusedPrivateMember, name.start_byte(), message);
                     diagnostics.push(match field_removal(member, &declarators, index, text) {
@@ -50,11 +52,11 @@ pub fn check(program: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
         "method_declaration" if is_candidate(member) => {
             let Some(name) = member.child_by_field_name("name") else { return };
             let method = source(&name, text);
-            if !names.methods.contains(method) && !SERIALIZATION_METHODS.contains(&method) {
+            if !names().methods.contains(method) && !SERIALIZATION_METHODS.contains(&method) {
                 let message = format!("Unused private method '{method}'");
                 let diagnostic = Diagnostic::new(Rule::UnusedPrivateMember, name.start_byte(), message);
                 // An overload may be the method a test framework finds by name (JUnit's `@MethodSource`).
-                diagnostics.push(if names.overloaded.contains(method) {
+                diagnostics.push(if names().overloaded.contains(method) {
                     diagnostic
                 } else {
                     diagnostic.with_unsafe_fix(vec![member_removal(member, text)])

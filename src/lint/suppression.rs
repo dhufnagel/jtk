@@ -35,6 +35,10 @@ impl Suppressions {
     pub fn find(root: &Node, text: &str) -> Suppressions {
         let line_starts = crate::newlines::line_offsets(text);
         let mut suppressions = Suppressions { line_starts, lines: Vec::new(), declarations: Vec::new() };
+        // Most files suppress nothing; finding that in the text is much cheaper than walking the tree.
+        if !(text.contains(IGNORE_COMMENT) || text.contains(NOPMD_COMMENT) || text.contains("SuppressWarnings")) {
+            return suppressions;
+        }
         for_each_node(root, |node| match node.kind() {
             "line_comment" | "block_comment" => suppressions.add_comment(node, text),
             "annotation" => suppressions.add_annotation(node, text),

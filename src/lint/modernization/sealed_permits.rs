@@ -18,6 +18,10 @@ pub fn missing_permits(declaration: &Node, text: &str, diagnostics: &mut Vec<Dia
 }
 
 pub fn unnecessary_permits(program: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
+    // Most files have no `permits` clause; finding that in the text is much cheaper than walking the tree.
+    if !text.contains("permits") {
+        return;
+    }
     let mut names = Vec::new();
     let mut clauses = Vec::new();
     for_each_descendant(program, &[], |node| match node.kind() {

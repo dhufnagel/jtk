@@ -115,27 +115,68 @@ struct References {
 
 /// Whether the variable is read, and whether it is written, after `after` in its scope. Code in a nested class that
 /// declares the same name refers to its own variable.
+///
+/// Only identifiers spelled like the variable can refer to it, so its occurrences are found in the text instead of
+/// walking the scope: an occurrence counts if the scope's smallest node around it is exactly an identifier.
 fn references(variable: &str, scope: &Node, after: usize, text: &str) -> References {
     let mut references = References::default();
-    let mut pending = named_children(scope);
-    while let Some(node) = pending.pop() {
-        if node.kind() == "identifier"
-            && node.start_byte() >= after
-            && source(&node, text) == variable
-            && is_name_reference(&node)
-        {
-            if is_only_written(&node, text) {
-                references.written = true;
-            } else {
-                references.read = true;
-                return references;
-            }
+    let start = after.max(scope.start_byte());
+    let end = scope.end_byte();
+    if start >= end || variable.is_empty() {
+        return references;
+    }
+    // Class bodies (by id) already checked for declaring the variable.
+    let mut class_bodies: Vec<(usize, bool)> = Vec::new();
+    let mut from = start;
+    while let Some(i) = text[from..end].find(variable) {
+        let position = from + i;
+        from = position + variable.len();
+        let Some(node) = scope.descendant_for_byte_range(position, from) else { continue };
+        if node.kind() != "identifier" || node.start_byte() != position || node.end_byte() != from {
+            continue;
         }
-        if node.kind() != "class_body" || !declares(&node, variable, text) {
-            pending.extend(named_children(&node));
+        if in_shadowing_class(&node, scope, variable, text, &mut class_bodies) || !is_name_reference(&node) {
+            continue;
+        }
+        if is_only_written(&node, text) {
+            references.written = true;
+        } else {
+            references.read = true;
+            return references;
         }
     }
     references
+}
+
+/// Whether the identifier is inside a class body (within the scope) that declares a variable of the same name.
+fn in_shadowing_class(
+    identifier: &Node,
+    scope: &Node,
+    variable: &str,
+    text: &str,
+    checked: &mut Vec<(usize, bool)>,
+) -> bool {
+    let mut ancestor = identifier.parent();
+    while let Some(node) = ancestor {
+        if node.id() == scope.id() {
+            return false;
+        }
+        if node.kind() == "class_body" {
+            let declares = match checked.iter().find(|(id, _)| *id == node.id()) {
+                Some(&(_, declares)) => declares,
+                None => {
+                    let declares = declares(&node, variable, text);
+                    checked.push((node.id(), declares));
+                    declares
+                }
+            };
+            if declares {
+                return true;
+            }
+        }
+        ancestor = node.parent();
+    }
+    false
 }
 
 fn declares(class_body: &Node, variable: &str, text: &str) -> bool {

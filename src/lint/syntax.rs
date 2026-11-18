@@ -7,6 +7,12 @@ pub fn source<'a>(node: &Node, text: &'a str) -> &'a str {
 }
 
 pub fn named_children<'t>(node: &Node<'t>) -> Vec<Node<'t>> {
+    // Looking a child up by index walks the preceding children, but needs no cursor (an allocation): used for nodes
+    // with few children.
+    let count = node.named_child_count();
+    if count <= 8 {
+        return (0..count as u32).filter_map(|i| node.named_child(i)).collect();
+    }
     node.named_children(&mut node.walk()).collect()
 }
 
