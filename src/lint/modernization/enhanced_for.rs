@@ -12,10 +12,13 @@
 //! list be modified, which would make the iterator throw). The element is named after the array or list (`items`:
 //! `item`), or `element` if that name is taken or not a plural.
 
-use tree_sitter::Node;
+use std::ops::Range;
 
-use crate::lint::syntax::{has_comment, is_name_reference_in, named_children, operator, source};
+use crate::ast::{CaseKind, ClassKind, K, Tree, VarDecl};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+
+use super::shared_a::for_each_variable_reference;
 
 const LIST_TYPES: &[&str] = &[
     "List",
@@ -55,76 +58,86 @@ enum Kind {
     List,
 }
 
-pub fn check(loop_node: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
+/// The parts of the checked `for` loop.
+struct Loop<'t> {
+    tree: &'t Tree,
+    init: Option<&'t Tree>,
+    cond: Option<&'t Tree>,
+    update: &'t [Tree],
+    body: &'t Tree,
+}
+
+pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
+    let K::For { init, cond, update, body } = &tree.kind else { return };
     let message = "This 'for' loop can be replaced by an enhanced 'for' loop";
-    let Some(init) = loop_node.child_by_field_name("init") else {
+    let for_loop = Loop { tree, init: init.first(), cond: cond.as_deref(), update, body };
+    let Some(init) = for_loop.init else {
         // `int i = 0; for (; i < a.length; i++)`: reported, not fixed.
-        if index_loop(loop_node, None, text).is_some() {
-            diagnostics.push(Diagnostic::new(Rule::EnhancedFor, loop_node.start_byte(), message));
+        if index_loop(&for_loop, None, context).is_some() {
+            diagnostics.push(Diagnostic::new(Rule::EnhancedFor, tree.start, message));
         }
         return;
     };
-    if init.kind() != "local_variable_declaration" {
-        return;
-    }
-    let declarators: Vec<Node> =
-        named_children(&init).into_iter().filter(|d| d.kind() == "variable_declarator").collect();
-    let [declarator] = declarators.as_slice() else { return };
-    let (Some(index), Some(value), Some(index_type)) = (
-        declarator.child_by_field_name("name"),
-        declarator.child_by_field_name("value"),
-        init.child_by_field_name("type"),
-    ) else {
-        return;
-    };
-    let index_name = source(&index, text);
-    if index_type.kind() == "integral_type" && source(&index_type, text) == "int" && source(&value, text) == "0" {
-        let Some(fix) = index_loop(loop_node, Some(index_name), text) else { return };
-        let diagnostic = Diagnostic::new(Rule::EnhancedFor, loop_node.start_byte(), message);
+    let K::Vars(vars) = &init.kind else { return };
+    let [var] = vars.as_slice() else { return };
+    // `var` has no type.
+    let (Some(value), Some(index_type)) = (var.init.as_deref(), var.ty.as_deref()) else { return };
+    if matches!(&index_type.kind, K::Primitive(p) if p == "int") && context.source(value) == "0" {
+        let Some(fix) = index_loop(&for_loop, Some(&var.name), context) else { return };
+        let diagnostic = Diagnostic::new(Rule::EnhancedFor, tree.start, message);
         diagnostics.push(match fix {
             Some(edits) => diagnostic.with_fix(edits),
             None => diagnostic,
         });
-    } else if is_iterator_loop(loop_node, index_name, &index_type, &value, text) {
-        diagnostics.push(Diagnostic::new(Rule::EnhancedFor, loop_node.start_byte(), message));
+    } else if is_iterator_loop(&for_loop, &var.name, index_type, value, context) {
+        diagnostics.push(Diagnostic::new(Rule::EnhancedFor, tree.start, message));
     }
 }
 
 /// Whether the loop iterates over the indexes of an array or list (`None` if not), with the fix if there is one.
 /// Without the index declared in the loop (`index` is `None`), it must be an `int` variable declared in the block
 /// around the loop, and used only in the loop.
-fn index_loop(loop_node: &Node, index: Option<&str>, text: &str) -> Option<Option<Vec<Edit>>> {
+fn index_loop(for_loop: &Loop, index: Option<&str>, context: &Context) -> Option<Option<Vec<Edit>>> {
     let fixable = index.is_some();
     let (index, scope) = match index {
-        Some(index) => (index, loop_node.child_by_field_name("body")?),
+        Some(index) => (index, for_loop.body),
         None => {
-            let index = incremented_variable(loop_node, text)?;
-            let block = loop_node.parent().filter(|p| matches!(p.kind(), "block" | "constructor_body"))?;
-            let declared_int = named_children(&block)
-                .into_iter()
-                .take_while(|c| c.start_byte() < loop_node.start_byte())
-                .filter(|c| c.kind() == "local_variable_declaration")
-                .filter_map(|d| declarator_type(&d, index, text))
+            let index = incremented_variable(for_loop, context.text)?;
+            let block = context.parent()?;
+            let K::Block { stmts, .. } = &block.kind else { return None };
+            let declared_int = stmts
+                .iter()
+                .take_while(|s| s.start < for_loop.tree.start)
+                .filter_map(|s| variable(s, index))
                 .last()
-                .is_some_and(|d| d.extra_dimensions == 0 && source(&d.type_node, text) == "int");
+                .is_some_and(|v| v.ty.as_deref().is_some_and(|t| matches!(&t.kind, K::Primitive(p) if p == "int")));
             if !declared_int {
                 return None;
             }
             (index, block)
         }
     };
-    let (iterable, kind) = iterable_of_condition(loop_node, index, text)?;
-    if incremented_variable(loop_node, text) != Some(index) {
+    let (iterable, kind) = iterable_of_condition(for_loop, index, context)?;
+    if incremented_variable(for_loop, context.text) != Some(index) {
         return None;
     }
-    let accesses = element_accesses(loop_node, &scope, index, &iterable, kind, text)?;
-    let declared = declared_type(loop_node, &iterable, text)?;
-    let element_type = element_type(&declared, kind, text)?;
-    if kind == Kind::List && !is_java_util_type(&declared.type_node, text) {
+    let accesses = element_accesses(for_loop, scope, index, &iterable, kind, context)?;
+    let declared = declared_type(for_loop.tree, &context.ancestors, &iterable)?;
+    let element_type = element_type(&declared, kind, context)?;
+    if kind == Kind::List && !declared.ty.is_some_and(|t| is_java_util_type(t, context.text)) {
         return None;
     }
-    Some(element_type.filter(|_| fixable).and_then(|t| enhanced_for(loop_node, &iterable, &t, &accesses, text)))
+    Some(element_type.filter(|_| fixable).and_then(|t| enhanced_for(for_loop, &iterable, &t, &accesses, context)))
 }
+
+/// The variable of the name if the statement is a local variable declaration that declares it.
+fn variable<'t>(statement: &'t Tree, name: &str) -> Option<&'t VarDecl> {
+    match &statement.kind {
+        K::Vars(vars) => vars.iter().find(|v| v.name == name),
+        _ => None,
+    }
+}
+
 /// The iterated array or list: a name or `this.name`.
 struct Iterable<'a> {
     name: &'a str,
@@ -132,298 +145,258 @@ struct Iterable<'a> {
     code: &'a str,
 }
 
+impl<'a> Iterable<'a> {
+    /// The array, list or collection that the expression names, if it is a name or `this.name`.
+    fn of(expression: &'a Tree, text: &'a str) -> Option<Iterable<'a>> {
+        let code = &text[expression.start..expression.end];
+        match &expression.kind {
+            K::Ident(name) if name != "this" && name != "super" => Some(Iterable { name, qualified: false, code }),
+            K::MemberSelect { expr, name } if matches!(&expr.kind, K::Ident(this) if this == "this") => {
+                Some(Iterable { name, qualified: true, code })
+            }
+            _ => None,
+        }
+    }
+}
+
 /// The array or list of the condition `i < a.length`, `i <= a.length - 1` or `i < list.size()`.
-fn iterable_of_condition<'a>(loop_node: &Node, index: &str, text: &'a str) -> Option<(Iterable<'a>, Kind)> {
-    let condition = loop_node.child_by_field_name("condition").filter(|c| c.kind() == "binary_expression")?;
-    let left = condition.child_by_field_name("left")?;
-    let right = condition.child_by_field_name("right")?;
-    if left.kind() != "identifier" || source(&left, text) != index {
+fn iterable_of_condition<'t>(for_loop: &Loop<'t>, index: &str, context: &Context<'t>) -> Option<(Iterable<'t>, Kind)> {
+    let K::Binary { op, lhs, rhs } = &for_loop.cond?.kind else { return None };
+    if !matches!(&lhs.kind, K::Ident(name) if name == index) {
         return None;
     }
-    let bound = match operator(&condition, text) {
-        "<" => right,
-        "<=" => {
-            let one = right.child_by_field_name("right")?;
-            if right.kind() != "binary_expression" || operator(&right, text) != "-" || source(&one, text) != "1" {
-                return None;
+    let bound = match op.as_str() {
+        "<" => rhs,
+        "<=" => match &rhs.kind {
+            K::Binary { op, lhs, rhs: one } if op == "-" && context.source(one) == "1" => lhs,
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let (object, kind) = match &bound.kind {
+        K::MemberSelect { expr, name } if name == "length" => (expr, Kind::Array),
+        K::MethodInvocation { select, type_args, args } if type_args.is_empty() && args.is_empty() => {
+            match &select.kind {
+                K::MemberSelect { expr, name } if name == "size" => (expr, Kind::List),
+                _ => return None,
             }
-            right.child_by_field_name("left")?
         }
         _ => return None,
     };
-    let (object, kind) = match bound.kind() {
-        "field_access" if bound.child_by_field_name("field").is_some_and(|f| source(&f, text) == "length") => {
-            (bound.child_by_field_name("object")?, Kind::Array)
-        }
-        "method_invocation"
-            if bound.child_by_field_name("name").is_some_and(|n| source(&n, text) == "size")
-                && bound.child_by_field_name("arguments").is_some_and(|a| a.named_child_count() == 0)
-                && bound.child_by_field_name("type_arguments").is_none() =>
-        {
-            (bound.child_by_field_name("object")?, Kind::List)
-        }
-        _ => return None,
-    };
-    let iterable = match object.kind() {
-        "identifier" => Iterable { name: source(&object, text), qualified: false, code: source(&object, text) },
-        "field_access" if object.child_by_field_name("object").is_some_and(|o| o.kind() == "this") => {
-            let field = object.child_by_field_name("field").filter(|f| f.kind() == "identifier")?;
-            Iterable { name: source(&field, text), qualified: true, code: source(&object, text) }
-        }
-        _ => return None,
-    };
-    Some((iterable, kind))
+    Some((Iterable::of(object, context.text)?, kind))
 }
 
 /// The variable that the loop's only update increments by one.
-fn incremented_variable<'a>(loop_node: &Node, text: &'a str) -> Option<&'a str> {
-    let updates: Vec<Node> = loop_node.children_by_field_name("update", &mut loop_node.walk()).collect();
-    let [update] = updates.as_slice() else { return None };
-    let name = |node: Option<Node>| node.filter(|n| n.kind() == "identifier").map(|n| source(&n, text));
-    let is_one = |node: Option<Node>| node.is_some_and(|n| source(&n, text) == "1");
-    match update.kind() {
-        "update_expression" if source(update, text).contains("++") => name(update.named_child(0)),
-        "assignment_expression" => {
-            let left = update.child_by_field_name("left");
-            let right = update.child_by_field_name("right");
-            match operator(update, text) {
-                "+=" if is_one(right) => name(left),
-                "=" => {
-                    let variable = name(left)?;
-                    let is_variable = |node: Option<Node>| name(node) == Some(variable);
-                    let r = right.filter(|r| r.kind() == "binary_expression" && operator(r, text) == "+")?;
-                    let (a, b) = (r.child_by_field_name("left"), r.child_by_field_name("right"));
-                    (is_variable(a) && is_one(b) || is_one(a) && is_variable(b)).then_some(variable)
-                }
-                _ => None,
-            }
+fn incremented_variable<'t>(for_loop: &Loop<'t>, text: &str) -> Option<&'t str> {
+    let [update] = for_loop.update else { return None };
+    let name = |tree: &'t Tree| match &tree.kind {
+        K::Ident(name) => Some(name.as_str()),
+        _ => None,
+    };
+    match &update.kind {
+        K::Unary { op, expr, .. } if op == "++" => name(expr),
+        K::Assign { op, lhs, rhs } if op == "+=" && is_one(rhs, text) => name(lhs),
+        K::Assign { op, lhs, rhs } if op == "=" => {
+            let variable = name(lhs)?;
+            let K::Binary { op, lhs: a, rhs: b } = &rhs.kind else { return None };
+            let is_variable = |tree: &Tree| matches!(&tree.kind, K::Ident(n) if n == variable);
+            let incremented = is_variable(a) && is_one(b, text) || is_one(a, text) && is_variable(b);
+            (op == "+" && incremented).then_some(variable)
         }
         _ => None,
     }
 }
 
-/// Whether the declared type is a type of `java.util`: written qualified, or imported by name or with `*`.
-fn is_java_util_type(type_node: &Node, text: &str) -> bool {
-    let base = if type_node.kind() == "generic_type" { type_node.named_child(0) } else { Some(*type_node) };
-    let Some(base) = base.map(|b| source(&b, text)) else { return false };
+/// Whether the expression is `1`.
+fn is_one(tree: &Tree, text: &str) -> bool {
+    &text[tree.start..tree.end] == "1"
+}
+
+/// Whether the type is a type of `java.util`: written qualified, or imported by name or with `*`.
+fn is_java_util_type(ty: &Tree, text: &str) -> bool {
+    let base = match &ty.kind {
+        K::Parameterized { base, .. } => base,
+        _ => ty,
+    };
+    let base = &text[base.start..base.end];
     if let Some(simple) = base.strip_prefix("java.util.") {
         return !simple.contains('.');
     }
     !base.contains('.') && (text.contains("import java.util.*;") || text.contains(&format!("import java.util.{base};")))
 }
 
-/// The element accesses `a[i]` or `list.get(i)` in the body, if they are the only uses of the index and only read
-/// the element.
+/// The element accesses `a[i]` or `list.get(i)` in the body, if they are the only uses of the index in `scope` and
+/// only read the element.
 fn element_accesses<'t>(
-    loop_node: &Node<'t>,
-    scope: &Node<'t>,
+    for_loop: &Loop<'t>,
+    scope: &'t Tree,
     index: &str,
     iterable: &Iterable,
     kind: Kind,
-    text: &str,
-) -> Option<Vec<Node<'t>>> {
-    let body = *scope;
-    let loop_body = loop_node.child_by_field_name("body")?.byte_range();
+    context: &Context<'t>,
+) -> Option<Vec<&'t Tree>> {
+    let range = |tree: &Tree| tree.start..tree.end;
+    let body = range(for_loop.body);
     // In the scope of an index declared before the loop, its uses in the loop's condition and update.
-    let condition = loop_node.child_by_field_name("condition")?.byte_range();
-    let update = loop_node.child_by_field_name("update")?.byte_range();
+    let condition = range(for_loop.cond?);
+    let update = range(for_loop.update.first()?);
     let mut accesses = Vec::new();
-    let mut ancestors = vec![body];
-    let mut cursor = body.walk();
     let mut valid = true;
-    // Iterative walk keeping the ancestors, as `Node::parent` is slow.
-    'walk: loop {
-        let node = cursor.node();
-        if node.kind() == "identifier" && source(&node, text) == index {
-            let parent = ancestors[ancestors.len().saturating_sub(2)];
-            let position = node.start_byte();
-            let in_header = condition.contains(&position) || update.contains(&position);
-            if node != body && !in_header && is_name_reference_in(&node, &parent) {
-                let grandparent = ancestors.len().checked_sub(3).map(|i| ancestors[i]);
-                match element_access(&node, &parent, grandparent, iterable, kind, text) {
-                    Some(access) if loop_body.contains(&position) => accesses.push(access),
-                    _ => valid = false,
-                }
-            }
+    for_each_variable_reference(scope, &mut |identifier, path| {
+        let position = identifier.start;
+        if !matches!(&identifier.kind, K::Ident(name) if name == index)
+            || condition.contains(&position)
+            || update.contains(&position)
+        {
+            return true;
         }
-        if !valid {
-            return None;
+        let parent = path[path.len() - 1];
+        let grandparent = path.len().checked_sub(2).map(|i| path[i]);
+        match element_access(identifier, parent, grandparent, iterable, kind, context) {
+            Some(access) if body.contains(&position) => accesses.push(access),
+            _ => valid = false,
         }
-        if cursor.goto_first_child() {
-            ancestors.push(cursor.node());
-            continue;
-        }
-        loop {
-            if cursor.goto_next_sibling() {
-                *ancestors.last_mut().unwrap() = cursor.node();
-                continue 'walk;
-            }
-            if !cursor.goto_parent() || cursor.node() == body {
-                break 'walk;
-            }
-            ancestors.pop();
-        }
-    }
-    Some(accesses)
+        valid
+    });
+    valid.then_some(accesses)
 }
 
 /// The access `a[i]` or `list.get(i)` of the index identifier, if it reads the element.
 fn element_access<'t>(
-    index: &Node<'t>,
-    parent: &Node<'t>,
-    grandparent: Option<Node<'t>>,
+    index: &Tree,
+    parent: &'t Tree,
+    grandparent: Option<&Tree>,
     iterable: &Iterable,
     kind: Kind,
-    text: &str,
-) -> Option<Node<'t>> {
-    match kind {
-        Kind::Array => {
-            let is_access = parent.kind() == "array_access"
-                && parent.child_by_field_name("index") == Some(*index)
-                && parent.child_by_field_name("array").is_some_and(|a| source(&a, text) == iterable.code);
-            let is_written = grandparent.is_some_and(|g| match g.kind() {
-                "assignment_expression" => g.child_by_field_name("left") == Some(*parent),
-                "update_expression" => true,
+    context: &Context,
+) -> Option<&'t Tree> {
+    let is = |a: &Tree, b: &Tree| std::ptr::eq(a, b);
+    match (kind, &parent.kind) {
+        (Kind::Array, K::ArrayAccess { expr, index: i }) => {
+            let is_access = is(i, index) && context.source(expr) == iterable.code;
+            let is_written = grandparent.is_some_and(|g| match &g.kind {
+                K::Assign { lhs, .. } => is(lhs, parent),
+                K::Unary { op, .. } => op == "++" || op == "--",
                 _ => false,
             });
-            (is_access && !is_written).then_some(*parent)
+            (is_access && !is_written).then_some(parent)
         }
-        Kind::List => {
-            let call = grandparent.filter(|g| g.kind() == "method_invocation")?;
-            let is_get = parent.kind() == "argument_list"
-                && parent.named_child_count() == 1
-                && call.child_by_field_name("name").is_some_and(|n| source(&n, text) == "get")
-                && call.child_by_field_name("object").is_some_and(|o| source(&o, text) == iterable.code);
-            is_get.then_some(call)
+        (Kind::List, K::MethodInvocation { select, args, .. }) => {
+            let K::MemberSelect { expr, name } = &select.kind else { return None };
+            let is_get = matches!(args.as_slice(), [argument] if is(argument, index))
+                && name == "get"
+                && context.source(expr) == iterable.code
+                && !context.tokens().has_comment(select.end..parent.end);
+            is_get.then_some(parent)
         }
+        _ => None,
     }
 }
 
 /// The declared type of the array or list: the declaration of a local variable, parameter or field in the file.
 struct Declared<'t> {
-    type_node: Node<'t>,
-    /// Array dimensions after the variable name (`int a[]`), and one for a variable arity parameter.
-    extra_dimensions: usize,
+    /// With the dimensions after the name (`int a[]`) and of a variable arity parameter; `None` for `var`.
+    ty: Option<&'t Tree>,
+    name_pos: usize,
 }
 
-fn declared_type<'t>(loop_node: &Node<'t>, iterable: &Iterable, text: &str) -> Option<Declared<'t>> {
-    let mut child = *loop_node;
-    let mut ancestor = loop_node.parent();
-    while let Some(node) = ancestor {
-        let found = match node.kind() {
-            "block" | "constructor_body" | "switch_block_statement_group" if !iterable.qualified => {
-                named_children(&node)
-                    .into_iter()
-                    .take_while(|c| c.start_byte() < child.start_byte())
-                    .filter(|c| c.kind() == "local_variable_declaration")
-                    .find_map(|d| declarator_type(&d, iterable.name, text))
+impl<'t> Declared<'t> {
+    fn of(var: &'t VarDecl) -> Declared<'t> {
+        Declared { ty: var.ty.as_deref(), name_pos: var.name_pos }
+    }
+}
+
+/// The declaration of the iterable seen from the loop, whose enclosing trees are `ancestors`: the innermost local
+/// variable or parameter declared before it, or field of the innermost class.
+fn declared_type<'t>(loop_tree: &'t Tree, ancestors: &[&'t Tree], iterable: &Iterable) -> Option<Declared<'t>> {
+    let name = iterable.name;
+    let local = !iterable.qualified;
+    let before = |statements: &'t [Tree], child: &Tree| {
+        statements.iter().take_while(|s| s.start < child.start).find_map(|s| variable(s, name)).map(Declared::of)
+    };
+    let field = |members: &'t [Tree]| members.iter().find_map(|m| variable(m, name)).map(Declared::of);
+    let mut child = loop_tree;
+    for &tree in ancestors.iter().rev() {
+        let contains = |trees: &[Tree]| trees.iter().any(|t| std::ptr::eq(t, child));
+        // A class body ends the search for `this.name`.
+        let found = match &tree.kind {
+            K::Block { stmts, .. } if local => before(stmts, child),
+            K::Switch { cases, .. } | K::SwitchExpr { cases, .. } if local => cases
+                .iter()
+                .find(|c| c.kind == CaseKind::Statement && contains(&c.stmts))
+                .and_then(|c| before(&c.stmts, child)),
+            K::For { init, .. } if local => init.first().and_then(|i| variable(i, name)).map(Declared::of),
+            K::ForEach { var, .. } if local && var.name == name => Some(Declared::of(var)),
+            K::Method(method) if local && !method.compact_ctor => {
+                method.params.iter().find(|p| p.name == name).map(Declared::of)
             }
-            "for_statement" if !iterable.qualified => node
-                .child_by_field_name("init")
-                .filter(|i| i.kind() == "local_variable_declaration")
-                .and_then(|d| declarator_type(&d, iterable.name, text)),
-            "enhanced_for_statement" if !iterable.qualified => {
-                let name = node.child_by_field_name("name");
-                let declared = name.is_some_and(|n| source(&n, text) == iterable.name);
-                let dimensions = node.child_by_field_name("dimensions").map_or(0, |d| dimensions(&d, text));
-                node.child_by_field_name("type")
-                    .filter(|_| declared)
-                    .map(|type_node| Declared { type_node, extra_dimensions: dimensions })
+            // Only explicitly typed lambda parameters.
+            K::Lambda { params, .. } if local && params.iter().any(|p| p.ty.is_some()) => {
+                params.iter().find(|p| p.name == name).map(Declared::of)
             }
-            "method_declaration" | "constructor_declaration" | "lambda_expression" if !iterable.qualified => node
-                .child_by_field_name("parameters")
-                .filter(|p| p.kind() == "formal_parameters")
-                .and_then(|p| parameter_type(&p, iterable.name, text)),
-            "class_body" | "enum_body_declarations" => {
-                let field = named_children(&node)
-                    .into_iter()
-                    .filter(|c| c.kind() == "field_declaration")
-                    .find_map(|d| declarator_type(&d, iterable.name, text));
-                if field.is_some() || iterable.qualified {
-                    return field;
+            K::Class(class) => {
+                let body = match class.kind {
+                    ClassKind::Class | ClassKind::Record => Some(&class.members[..]),
+                    ClassKind::Enum if contains(&class.members) => Some(&class.members[..]),
+                    ClassKind::Enum => {
+                        class.enum_constants.iter().filter_map(|c| c.body.as_deref()).find(|b| contains(b))
+                    }
+                    ClassKind::Interface | ClassKind::Annotation => None,
+                };
+                match body.map(field) {
+                    Some(found) if found.is_some() || !local => return found,
+                    _ => None,
                 }
-                None
             }
-            "program" => return None,
+            K::NewClass { body: Some(body), .. } if contains(body) => match field(body) {
+                found if found.is_some() || !local => return found,
+                _ => None,
+            },
             _ => None,
         };
         if found.is_some() {
             return found;
         }
-        child = node;
-        ancestor = node.parent();
+        child = tree;
     }
     None
 }
 
-fn declarator_type<'t>(declaration: &Node<'t>, name: &str, text: &str) -> Option<Declared<'t>> {
-    let declarator = named_children(declaration).into_iter().find(|d| {
-        d.kind() == "variable_declarator" && d.child_by_field_name("name").is_some_and(|n| source(&n, text) == name)
-    })?;
-    let extra_dimensions = declarator.child_by_field_name("dimensions").map_or(0, |d| dimensions(&d, text));
-    Some(Declared { type_node: declaration.child_by_field_name("type")?, extra_dimensions })
-}
-
-fn parameter_type<'t>(parameters: &Node<'t>, name: &str, text: &str) -> Option<Declared<'t>> {
-    named_children(parameters).into_iter().find_map(|p| match p.kind() {
-        "formal_parameter" if p.child_by_field_name("name").is_some_and(|n| source(&n, text) == name) => {
-            let extra_dimensions = p.child_by_field_name("dimensions").map_or(0, |d| dimensions(&d, text));
-            Some(Declared { type_node: p.child_by_field_name("type")?, extra_dimensions })
-        }
-        "spread_parameter" => {
-            let declarator = named_children(&p).into_iter().find(|c| c.kind() == "variable_declarator")?;
-            let named = declarator.child_by_field_name("name").is_some_and(|n| source(&n, text) == name);
-            named.then_some(Declared { type_node: p.child_by_field_name("type")?, extra_dimensions: 1 })
-        }
-        _ => None,
-    })
-}
-
-fn dimensions(node: &Node, text: &str) -> usize {
-    source(node, text).matches('[').count()
-}
-
 /// Whether the declared type is an array or list type (`None` if not); with the element type if it is known.
-fn element_type(declared: &Declared, kind: Kind, text: &str) -> Option<Option<String>> {
-    let type_node = declared.type_node;
+fn element_type(declared: &Declared, kind: Kind, context: &Context) -> Option<Option<String>> {
+    let ty = declared.ty?;
     match kind {
         Kind::Array => {
-            let (element, type_dimensions) = if type_node.kind() == "array_type" {
-                let element = type_node.child_by_field_name("element")?;
-                let dimensions = type_node.child_by_field_name("dimensions").map_or(0, |d| dimensions(&d, text));
-                (element, dimensions)
-            } else {
-                (type_node, 0)
-            };
-            let total = type_dimensions + declared.extra_dimensions;
-            if total == 0 {
+            let mut element = ty;
+            let mut dimensions = 0;
+            while let K::ArrayType { elem, dims } = &element.kind {
+                dimensions += dims.len();
+                element = elem;
+            }
+            if dimensions == 0 {
                 return None;
             }
-            let annotated = source(&type_node, text).contains('@');
-            let element = format!("{}{}", source(&element, text), "[]".repeat(total - 1));
-            Some((!annotated && source(&type_node, text) != "var").then_some(element))
+            // The declared type, without the dimensions after the name.
+            let annotated = context.text[ty.start..ty.end.min(declared.name_pos)].contains('@');
+            let element = format!("{}{}", context.source(element), "[]".repeat(dimensions - 1));
+            Some((!annotated).then_some(element))
         }
         Kind::List => {
-            if declared.extra_dimensions > 0 {
-                return None;
-            }
-            let (base, arguments) = match type_node.kind() {
-                "generic_type" => {
-                    let children = named_children(&type_node);
-                    (*children.first()?, children.into_iter().find(|c| c.kind() == "type_arguments"))
-                }
-                "type_identifier" | "scoped_type_identifier" => (type_node, None),
+            let (base, arguments) = match &ty.kind {
+                K::Parameterized { base, args } => (&**base, Some(args)),
+                K::Ident(_) | K::MemberSelect { .. } => (ty, None),
                 _ => return None,
             };
-            let base = source(&base, text);
+            let has_comment = context.tokens().has_comment(base.end..ty.end);
+            let base = context.source(base);
             let simple = base.rsplit('.').next().unwrap_or(base);
             let is_list = LIST_TYPES.contains(&simple) && (simple == base || base.starts_with("java.util."));
             if !is_list {
                 return None;
             }
-            let argument = arguments.and_then(|a| match named_children(&a).as_slice() {
-                [argument] if argument.kind() != "wildcard" && !has_comment(&a) => {
-                    Some(source(argument, text).to_string())
+            let argument = arguments.and_then(|a| match a.as_slice() {
+                [argument] if !matches!(argument.kind, K::Wildcard { .. }) && !has_comment => {
+                    Some(context.source(argument).to_string())
                 }
                 _ => None,
             });
@@ -435,41 +408,41 @@ fn element_type(declared: &Declared, kind: Kind, text: &str) -> Option<Option<St
 /// The edits that turn the loop into `for (T e : iterable)`, if the body uses the iterable only in the element
 /// accesses.
 fn enhanced_for(
-    loop_node: &Node,
+    for_loop: &Loop,
     iterable: &Iterable,
     element_type: &str,
-    accesses: &[Node],
-    text: &str,
+    accesses: &[&Tree],
+    context: &Context,
 ) -> Option<Vec<Edit>> {
-    let body = loop_node.child_by_field_name("body")?;
-    let mut other_use = false;
-    crate::lint::syntax::for_each_descendant(&body, &[], |node| {
-        let in_access = accesses.iter().any(|a| a.start_byte() <= node.start_byte() && node.end_byte() <= a.end_byte());
-        other_use |= node.kind() == "identifier" && source(node, text) == iterable.name && !in_access;
-    });
-    let open = loop_node.children(&mut loop_node.walk()).find(|c| c.kind() == "(")?;
-    let close = loop_node.children(&mut loop_node.walk()).find(|c| c.kind() == ")")?;
-    let header = open.start_byte()..close.end_byte();
-    let header_has_comment = loop_node
-        .children(&mut loop_node.walk())
-        .any(|c| c.start_byte() >= header.start && c.end_byte() <= header.end && crate::lint::syntax::is_comment(&c));
-    if other_use || header_has_comment || has_comment(&loop_node.child_by_field_name("condition")?) {
+    let text = context.text;
+    let tokens = context.tokens();
+    let body = for_loop.body;
+    let inside = |range: &Range<usize>, tree: &Tree| tree.start <= range.start && range.end <= tree.end;
+    let other_use = tokens
+        .in_range(body.start..body.end)
+        .any(|t| &text[t.clone()] == iterable.name && !accesses.iter().any(|a| inside(&t, a)));
+    let open = tokens.next(for_loop.tree.start + "for".len())?;
+    let close = tokens.previous(body.start)?;
+    let header = open.start..close.end;
+    // Comments in the condition, or in the header but not in the initialization or the update.
+    let in_part = |comment: &Range<usize>| for_loop.init.into_iter().chain(for_loop.update).any(|t| inside(comment, t));
+    if other_use || tokens.comments_in(header.clone()).any(|c| !in_part(&c)) {
         return None;
     }
     let name = element_name(iterable.name, text);
     // One edit for the whole loop, so that a nested loop is converted in a later round, when this loop's element
     // name is in the text.
     let mut replacements = vec![(header, format!("({element_type} {name} : {})", iterable.code))];
-    replacements.extend(accesses.iter().map(|a| (a.byte_range(), name.clone())));
+    replacements.extend(accesses.iter().map(|a| (a.start..a.end, name.clone())));
     let mut code = String::new();
-    let mut position = loop_node.start_byte();
+    let mut position = for_loop.tree.start;
     for (range, replacement) in replacements {
         code.push_str(&text[position..range.start]);
         code.push_str(&replacement);
         position = range.end;
     }
-    code.push_str(&text[position..loop_node.end_byte()]);
-    Some(vec![Edit::new(loop_node.byte_range(), code)])
+    code.push_str(&text[position..for_loop.tree.end]);
+    Some(vec![Edit::new(for_loop.tree.start..for_loop.tree.end, code)])
 }
 
 /// The singular of the iterable's name, or `element`; with a number if the name occurs in the file.
@@ -561,59 +534,79 @@ const JAVA_KEYWORDS: &[&str] = &[
 ];
 
 /// `for (Iterator<T> it = c.iterator(); it.hasNext();)` that uses `it` only in the condition and one `it.next()`.
-fn is_iterator_loop(loop_node: &Node, iterator: &str, iterator_type: &Node, value: &Node, text: &str) -> bool {
-    let base = match iterator_type.kind() {
-        "generic_type" => iterator_type.named_child(0),
-        _ => Some(*iterator_type),
+fn is_iterator_loop(for_loop: &Loop, iterator: &str, iterator_type: &Tree, value: &Tree, context: &Context) -> bool {
+    let base = match &iterator_type.kind {
+        K::Parameterized { base, .. } => base,
+        _ => iterator_type,
     };
-    let is_iterator_type = base.is_some_and(|b| matches!(source(&b, text), "Iterator" | "java.util.Iterator"));
-    let is_call = |node: &Node, method: &str| {
-        node.kind() == "method_invocation"
-            && node.child_by_field_name("name").is_some_and(|n| source(&n, text) == method)
-            && node.child_by_field_name("arguments").is_some_and(|a| a.named_child_count() == 0)
-    };
-    let condition = loop_node.child_by_field_name("condition");
-    let condition_is_has_next = condition.is_some_and(|c| {
-        is_call(&c, "hasNext") && c.child_by_field_name("object").is_some_and(|o| source(&o, text) == iterator)
-    });
-    if !is_iterator_type || !is_call(value, "iterator") || !condition_is_has_next {
+    let is_iterator_type = matches!(context.source(base), "Iterator" | "java.util.Iterator");
+    let condition_is_has_next = for_loop
+        .cond
+        .is_some_and(|c| is_call(c, "hasNext", context) && receiver(c).is_some_and(|r| context.source(r) == iterator));
+    if !is_iterator_type || !is_call(value, "iterator", context) || !condition_is_has_next {
         return false;
     }
     // PMD needs to know that the receiver is an `Iterable`.
-    let Some(collection) = value.child_by_field_name("object").filter(|o| o.kind() != "this") else {
+    let Some(collection) = receiver(value).filter(|r| !matches!(&r.kind, K::Ident(name) if name == "this")) else {
         // `iterator()` of the class itself.
-        let class = std::iter::successors(loop_node.parent(), |n| n.parent()).find(|n| n.kind() == "class_declaration");
-        return class
-            .and_then(|c| c.child_by_field_name("interfaces"))
-            .is_some_and(|i| source(&i, text).contains("Iterable"));
+        let class = context.ancestors.iter().rev().find_map(|t| match &t.kind {
+            K::Class(class) if class.kind == ClassKind::Class => Some(class),
+            _ => None,
+        });
+        return class.is_some_and(|c| match (c.implements.first(), c.implements.last()) {
+            (Some(first), Some(last)) => context.text[first.start..last.end].contains("Iterable"),
+            _ => false,
+        });
     };
-    let collection = match collection.kind() {
-        "identifier" => Iterable { name: source(&collection, text), qualified: false, code: "" },
-        "field_access" if collection.child_by_field_name("object").is_some_and(|o| o.kind() == "this") => {
-            let Some(field) = collection.child_by_field_name("field") else { return false };
-            Iterable { name: source(&field, text), qualified: true, code: "" }
-        }
-        _ => return false,
-    };
-    let is_collection = declared_type(loop_node, &collection, text).is_some_and(|d| {
-        let base = if d.type_node.kind() == "generic_type" { d.type_node.named_child(0) } else { Some(d.type_node) };
-        let base = base.map_or("", |b| source(&b, text));
-        d.extra_dimensions == 0
-            && COLLECTION_TYPES.contains(&base.rsplit('.').next().unwrap_or(base))
-            && (is_java_util_type(&d.type_node, text) || matches!(base, "Iterable" | "java.lang.Iterable"))
+    let Some(collection) = Iterable::of(collection, context.text) else { return false };
+    let is_collection = declared_type(for_loop.tree, &context.ancestors, &collection).is_some_and(|d| {
+        let Some(ty) = d.ty else { return false };
+        let base = match &ty.kind {
+            K::Parameterized { base, .. } => base,
+            K::ArrayType { .. } => return false,
+            _ => ty,
+        };
+        let base = context.source(base);
+        COLLECTION_TYPES.contains(&base.rsplit('.').next().unwrap_or(base))
+            && (is_java_util_type(ty, context.text) || matches!(base, "Iterable" | "java.lang.Iterable"))
     });
     if !is_collection {
         return false;
     }
     let mut uses = 0;
     let mut next_calls = 0;
-    crate::lint::syntax::for_each_descendant_with_parent(loop_node, |node, parent| {
-        if node.kind() == "identifier" && source(node, text) == iterator && is_name_reference_in(node, parent) {
+    for_each_variable_reference(for_loop.tree, &mut |identifier, path| {
+        if matches!(&identifier.kind, K::Ident(name) if name == iterator) {
             uses += 1;
-            if is_call(parent, "next") && parent.child_by_field_name("object") == Some(*node) {
+            if let [.., call, _] = path
+                && is_call(call, "next", context)
+                && receiver(call).is_some_and(|r| std::ptr::eq(r, identifier))
+            {
                 next_calls += 1;
             }
         }
+        true
     });
     uses == 2 && next_calls == 1
+}
+
+/// Whether the expression calls the method without arguments.
+fn is_call(tree: &Tree, method: &str, context: &Context) -> bool {
+    let K::MethodInvocation { select, args, .. } = &tree.kind else { return false };
+    let name = match &select.kind {
+        K::Ident(name) | K::MemberSelect { name, .. } => name,
+        _ => return false,
+    };
+    name == method && args.is_empty() && !context.tokens().has_comment(select.end..tree.end)
+}
+
+/// The object a method is called on: `a` in `a.m()`.
+fn receiver(call: &Tree) -> Option<&Tree> {
+    match &call.kind {
+        K::MethodInvocation { select, .. } => match &select.kind {
+            K::MemberSelect { expr, .. } => Some(expr),
+            _ => None,
+        },
+        _ => None,
+    }
 }
