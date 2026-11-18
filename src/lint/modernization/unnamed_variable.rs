@@ -5,124 +5,104 @@
 //! As in Checkstyle, a variable that is only assigned (`e = null`) is unused; the fix (renaming the declaration to
 //! `_`) is only offered when the name does not occur at all.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{is_name_reference_in, named_children, operator, source};
+use crate::ast::{K, Tree, VarDecl};
+use crate::lint::tree::{Context, is_type_child};
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn catch_parameter(clause: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(parameter) = named_children(clause).into_iter().find(|c| c.kind() == "catch_formal_parameter") else {
-        return;
-    };
-    let (Some(name), Some(body)) = (parameter.child_by_field_name("name"), clause.child_by_field_name("body")) else {
-        return;
-    };
-    report(&name, parameter.start_byte(), &[body], "catch parameter", text, diagnostics);
-}
+use super::shared_b::is_variable_name;
 
-pub fn lambda_parameter(lambda: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let (Some(parameters), Some(body)) = (lambda.child_by_field_name("parameters"), lambda.child_by_field_name("body"))
-    else {
-        return;
-    };
-    let names = match parameters.kind() {
-        "identifier" => vec![parameters],
-        "inferred_parameters" => named_children(&parameters).into_iter().filter(|c| c.kind() == "identifier").collect(),
-        _ => named_children(&parameters).iter().filter_map(parameter_name).collect(),
-    };
-    for name in names {
-        report(&name, name.start_byte(), &[body], "lambda parameter", text, diagnostics);
+/// Checks the catch parameters and resources of a `try`.
+pub fn check_try(statement: &Tree, _context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Try { resources, block, catches, .. } = &statement.kind else { return };
+    for catch in catches {
+        report(&catch.param, catch.param.start, &[&catch.block], "catch parameter", diagnostics);
     }
-}
-
-pub fn try_resource(statement: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let (Some(resources), Some(body)) =
-        (statement.child_by_field_name("resources"), statement.child_by_field_name("body"))
-    else {
-        return;
-    };
-    for resource in named_children(&resources).into_iter().filter(|r| r.kind() == "resource") {
-        if resource.child_by_field_name("type").is_none() {
-            continue;
-        }
-        if let Some(name) = resource.child_by_field_name("name") {
-            report(&name, name.start_byte(), &[resources, body], "try resource", text, diagnostics);
+    let mut scopes: Vec<&Tree> = resources.iter().collect();
+    scopes.push(block);
+    for resource in resources {
+        if let K::Var(var) = &resource.kind {
+            report(var, var.name_pos, &scopes, "try resource", diagnostics);
         }
     }
 }
 
-fn parameter_name<'t>(parameter: &Node<'t>) -> Option<Node<'t>> {
-    match parameter.kind() {
-        "formal_parameter" => parameter.child_by_field_name("name"),
-        "spread_parameter" => named_children(parameter)
-            .into_iter()
-            .find(|c| c.kind() == "variable_declarator")
-            .and_then(|d| d.child_by_field_name("name")),
-        _ => None,
+pub fn check_lambda(lambda: &Tree, _context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Lambda { params, body } = &lambda.kind else { return };
+    for param in params {
+        report(param, param.name_pos, &[body], "lambda parameter", diagnostics);
     }
 }
 
-fn report(name: &Node, offset: usize, scopes: &[Node], what: &str, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let variable = source(name, text);
-    if name.kind() != "identifier" || variable == "_" {
+fn report(var: &VarDecl, offset: usize, scopes: &[&Tree], what: &str, diagnostics: &mut Vec<Diagnostic>) {
+    let variable = var.name.as_str();
+    if variable == "_" {
         return;
     }
-    let (read, mentioned) = usage(scopes, variable, text);
-    if !read {
+    let mut usage = Usage::default();
+    for scope in scopes {
+        usage.visit(scope, None, variable);
+    }
+    if !usage.read {
         let message = format!("Unused {what} '{variable}' should be unnamed");
         let mut diagnostic = Diagnostic::new(Rule::UnnamedVariable, offset, message);
-        if !mentioned {
-            diagnostic = diagnostic.with_fix(vec![Edit::new(name.byte_range(), "_")]);
+        if !usage.mentioned {
+            let name_end = var.name_pos + variable.len();
+            diagnostic = diagnostic.with_fix(vec![Edit::new(var.name_pos..name_end, "_")]);
         }
         diagnostics.push(diagnostic);
     }
 }
 
-/// Whether the name is read in the scopes, and whether it occurs there at all. Like Checkstyle, any identifier with
-/// the name counts, except member names (`a.name`, `name()`) and the target of a plain assignment. Nested `catch`
-/// parameters and lambda parameters of the same name hide the variable.
-fn usage(scopes: &[Node], variable: &str, text: &str) -> (bool, bool) {
-    let mut read = false;
-    let mut mentioned = false;
-    let mut pending: Vec<(Node, Option<Node>)> = scopes.iter().map(|s| (*s, None)).collect();
-    while let Some((node, parent)) = pending.pop() {
-        if node.kind() == "identifier" && source(&node, text) == variable {
-            if parent.is_none_or(|p| is_name_reference_in(&node, &p)) {
-                mentioned = true;
-                let is_assigned = parent.is_some_and(|p| {
-                    p.kind() == "assignment_expression"
-                        && p.child_by_field_name("left") == Some(node)
-                        && operator(&p, text) == "="
-                });
-                read |= !is_assigned;
-            }
-            continue;
-        }
-        if declares(&node, variable, text) {
-            continue;
-        }
-        let mut cursor = node.walk();
-        pending.extend(node.named_children(&mut cursor).map(|c| (c, Some(node))));
-    }
-    (read, mentioned)
+/// Whether the name is read in the scopes, and whether it occurs there at all. Like Checkstyle, any variable name
+/// counts, except the target of a plain assignment. Nested `catch` parameters and lambda parameters of the same name
+/// hide the variable.
+#[derive(Default)]
+struct Usage {
+    read: bool,
+    mentioned: bool,
 }
 
-/// Whether a nested `catch` clause or lambda declares a parameter with the name.
-fn declares(node: &Node, variable: &str, text: &str) -> bool {
-    let names = match node.kind() {
-        "catch_clause" => named_children(node)
-            .into_iter()
-            .find(|c| c.kind() == "catch_formal_parameter")
-            .and_then(|p| p.child_by_field_name("name"))
-            .into_iter()
-            .collect(),
-        "lambda_expression" => match node.child_by_field_name("parameters") {
-            Some(p) if p.kind() == "identifier" => vec![p],
-            Some(p) if p.kind() == "inferred_parameters" => named_children(&p),
-            Some(p) => named_children(&p).iter().filter_map(parameter_name).collect(),
-            None => Vec::new(),
-        },
-        _ => Vec::new(),
-    };
-    names.iter().any(|n| source(n, text) == variable)
+impl Usage {
+    fn visit(&mut self, tree: &Tree, parent: Option<&Tree>, variable: &str) {
+        match &tree.kind {
+            K::Ident(name) => {
+                if name == variable && parent.is_none_or(|p| is_variable_name(tree, p)) {
+                    self.mentioned = true;
+                    let is_assigned = parent.is_some_and(
+                        |p| matches!(&p.kind, K::Assign { op, lhs, .. } if op == "=" && std::ptr::eq(&**lhs, tree)),
+                    );
+                    self.read |= !is_assigned;
+                }
+                return;
+            }
+            K::Lambda { params, .. } if params.iter().any(|p| p.name == variable) => return,
+            K::Try { resources, block, catches, finally } => {
+                for child in resources.iter().chain([&**block]) {
+                    self.visit(child, Some(tree), variable);
+                }
+                for catch in catches.iter().filter(|c| c.param.name != variable) {
+                    self.visit(&catch.block, Some(tree), variable);
+                }
+                if let Some(finally) = finally {
+                    self.visit(finally, Some(tree), variable);
+                }
+                return;
+            }
+            K::Annotation { args, .. } => {
+                for arg in args {
+                    match &arg.kind {
+                        K::Assign { rhs, .. } => self.visit(rhs, Some(arg), variable),
+                        _ => self.visit(arg, Some(tree), variable),
+                    }
+                }
+                return;
+            }
+            _ => {}
+        }
+        tree.for_each_child(&mut |child| {
+            if !is_type_child(tree, child) {
+                self.visit(child, Some(tree), variable);
+            }
+        });
+    }
 }

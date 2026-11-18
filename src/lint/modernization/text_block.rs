@@ -12,70 +12,46 @@
 //! Unsafe because the value only stays the same where the source has no line terminator other than `\n` escapes
 //! (always the case for literals) and the formatter keeps the text block's lines, which jtk's does.
 
-use std::cell::Cell;
-
-use tree_sitter::Node;
-
-use crate::lint::syntax::{named_children, operator, source};
+use crate::ast::{K, LitKind, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn check(binary: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if binary.kind() == "program" {
-        // A new file: forget the last one's concatenation.
-        LAST_WHOLE.set((0, 0, 0));
-        return;
-    }
-    if operator(binary, text) != "+" || is_inside_last_whole(binary, text) {
-        return;
-    }
+pub fn check(binary: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let is_concatenation = |t: &Tree| matches!(&t.kind, K::Binary { op, .. } if op == "+");
     // Only the whole concatenation (`"a\n" + "b\n" + "c"` nests to the left).
-    if binary.parent().is_some_and(|p| p.kind() == "binary_expression" && operator(&p, text) == "+") {
+    if !is_concatenation(binary) || context.parent().is_some_and(is_concatenation) {
         return;
     }
-    LAST_WHOLE.set((text.as_ptr() as usize, binary.start_byte(), binary.end_byte()));
-    let Some(literals) = literal_operands(binary, text) else { return };
+    let text = context.text;
+    let Some(literals) = literal_operands(binary, context) else { return };
     let contents: Vec<&str> = literals.iter().map(|l| literal_content(l, text)).collect();
     let lines_end = contents[..contents.len() - 1].iter().all(|c| ends_with_newline_escape(c));
-    let spans_lines = text[binary.byte_range()].contains('\n');
+    let spans_lines = context.source(binary).contains('\n');
     if literals.len() < 2 || !lines_end || !spans_lines {
         return;
     }
     let message = "String concatenation can be a text block";
-    let indentation = line_indentation(literals[1].start_byte(), text);
+    let indentation = line_indentation(literals[1].start, text);
     let block = text_block(&contents.concat(), indentation);
-    let fix = Edit::new(binary.byte_range(), block);
-    diagnostics.push(Diagnostic::new(Rule::TextBlock, binary.start_byte(), message).with_unsafe_fix(vec![fix]));
+    let fix = Edit::new(binary.start..binary.end, block);
+    diagnostics.push(Diagnostic::new(Rule::TextBlock, binary.start, message).with_unsafe_fix(vec![fix]));
 }
 
-thread_local! {
-    /// The text and byte range of the last whole concatenation checked in the current file.
-    static LAST_WHOLE: Cell<(usize, usize, usize)> = const { Cell::new((0, 0, 0)) };
-}
-
-/// Whether the `+` expression is on the left side of the last whole concatenation checked, which the walk visits
-/// first: then its parent is a `+` too. This avoids looking up the parent, which takes time proportional to the depth
-/// of the node, so that long concatenations (thousands of operands) would take quadratic time.
-fn is_inside_last_whole(binary: &Node, text: &str) -> bool {
-    let (whole_text, start, end) = LAST_WHOLE.get();
-    whole_text == text.as_ptr() as usize && binary.start_byte() == start && binary.end_byte() < end
-}
-
-/// The operands of a `+` concatenation if all are string literals (not text blocks), in order.
-fn literal_operands<'t>(binary: &Node<'t>, text: &str) -> Option<Vec<Node<'t>>> {
+/// The operands of a `+` concatenation if all are string literals (not text blocks) and no comment is between
+/// them, in order.
+fn literal_operands<'t>(binary: &'t Tree, context: &Context) -> Option<Vec<&'t Tree>> {
+    if context.tokens().has_comment(binary.start..binary.end) {
+        return None;
+    }
     let mut operands = Vec::new();
-    let mut pending = vec![*binary];
-    while let Some(node) = pending.pop() {
-        match node.kind() {
-            "binary_expression" if operator(&node, text) == "+" => {
-                // Comments between the operands are children of the expression.
-                let children = named_children(&node);
-                if children.len() != 2 {
-                    return None;
-                }
-                pending.push(children[1]);
-                pending.push(children[0]);
+    let mut pending = vec![binary];
+    while let Some(tree) = pending.pop() {
+        match &tree.kind {
+            K::Binary { op, lhs, rhs } if op == "+" => {
+                pending.push(rhs);
+                pending.push(lhs);
             }
-            "string_literal" if !source(&node, text).starts_with("\"\"\"") => operands.push(node),
+            K::Literal(LitKind::String) if !context.source(tree).starts_with("\"\"\"") => operands.push(tree),
             _ => return None,
         }
     }
@@ -83,8 +59,8 @@ fn literal_operands<'t>(binary: &Node<'t>, text: &str) -> Option<Vec<Node<'t>>> 
 }
 
 /// The text between the quotes of a string literal, with its escapes.
-fn literal_content<'a>(literal: &Node, text: &'a str) -> &'a str {
-    let code = source(literal, text);
+fn literal_content<'a>(literal: &Tree, text: &'a str) -> &'a str {
+    let code = &text[literal.start..literal.end];
     &code[1..code.len() - 1]
 }
 

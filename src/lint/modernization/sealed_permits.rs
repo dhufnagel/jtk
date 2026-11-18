@@ -5,48 +5,61 @@
 //!   the compiler infers it. As in Checkstyle, types are compared by simple name with all classes, interfaces, enums
 //!   and records of the file. The fix removes the clause.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{for_each_descendant, has_modifier, named_children, source};
+use crate::ast::{ClassKind, K, Tree};
+use crate::lint::tree::{Context, for_each_descendant, has_modifier};
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn missing_permits(declaration: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if has_modifier(declaration, text, "sealed") && declaration.child_by_field_name("permits").is_none() {
+pub fn missing_permits(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Class(class) = &tree.kind else { return };
+    if matches!(class.kind, ClassKind::Class | ClassKind::Interface)
+        && class.permits.is_empty()
+        && has_modifier(&class.mods, context.text, context.tokens(), "sealed")
+    {
         let message = "Sealed classes or interfaces should explicitly declare permitted subclasses";
-        diagnostics.push(Diagnostic::new(Rule::SealedPermits, declaration.start_byte(), message));
+        diagnostics.push(Diagnostic::new(Rule::SealedPermits, tree.start, message));
     }
 }
 
-pub fn unnecessary_permits(program: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
+pub fn unnecessary_permits(unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     // Most files have no `permits` clause; finding that in the text is much cheaper than walking the tree.
-    if !text.contains("permits") {
+    if !context.text.contains("permits") {
         return;
     }
     let mut names = Vec::new();
     let mut clauses = Vec::new();
-    for_each_descendant(program, &[], |node| match node.kind() {
-        "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration" => {
-            names.extend(node.child_by_field_name("name").map(|n| source(&n, text)));
-        }
-        "permits" => clauses.push(*node),
-        _ => {}
-    });
-    for clause in clauses {
-        let mut permitted = Vec::new();
-        for_each_descendant(&clause, &["scoped_type_identifier"], |node| match node.kind() {
-            "type_identifier" => permitted.push(source(node, text)),
-            "scoped_type_identifier" => {
-                permitted.extend(named_children(node).last().map(|n| source(n, text)));
+    for_each_descendant(unit, &mut |tree, _| {
+        if let K::Class(class) = &tree.kind
+            && class.kind != ClassKind::Annotation
+        {
+            names.push(class.name.as_str());
+            if !class.permits.is_empty() {
+                clauses.push(&class.permits);
             }
-            _ => {}
-        });
+        }
+        true
+    });
+    for permits in clauses {
+        let mut permitted = Vec::new();
+        for permit in permits {
+            simple_names(permit, &mut permitted);
+        }
+        let (Some(first), Some(last)) = (permits.first(), permits.last()) else { continue };
+        let Some(keyword) = context.tokens().previous(first.start) else { continue };
         if permitted.iter().all(|p| names.contains(p)) {
             // Only the blanks on the same line: a line comment may end the line before.
-            let before = text[..clause.start_byte()].trim_end_matches([' ', '\t']).len();
-            let fix = Edit::new(before..clause.end_byte(), "");
+            let before = context.text[..keyword.start].trim_end_matches([' ', '\t']).len();
+            let fix = Edit::new(before..last.end, "");
             let message = "Unnecessary 'permits' clause for classes in the same compilation unit";
-            diagnostics
-                .push(Diagnostic::new(Rule::UnnecessaryPermits, clause.start_byte(), message).with_fix(vec![fix]));
+            diagnostics.push(Diagnostic::new(Rule::UnnecessaryPermits, keyword.start, message).with_fix(vec![fix]));
         }
+    }
+}
+
+/// The simple names of the classes a type names: `C` for `a.b.C`, and those of type arguments.
+fn simple_names<'t>(ty: &'t Tree, names: &mut Vec<&'t str>) {
+    match &ty.kind {
+        K::Ident(name) | K::MemberSelect { name, .. } => names.push(name),
+        K::Annotated { base, .. } => simple_names(base, names),
+        _ => ty.for_each_child(&mut |child| simple_names(child, names)),
     }
 }

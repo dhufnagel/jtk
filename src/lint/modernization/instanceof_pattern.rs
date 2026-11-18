@@ -7,89 +7,82 @@
 //! `if` block, and the tested expression is a name or field, so that casting it again gives the same object. The
 //! rest of the condition must not use the variable's name, which would then refer to the pattern variable.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{
-    for_each_descendant, is_comment, modifiers, named_children, operator, source, strip_parentheses,
-};
+use crate::ast::{K, Tree};
+use crate::lint::tree::{Context, modifier_keywords, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn check(statement: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let (Some(condition), Some(consequence)) =
-        (statement.child_by_field_name("condition"), statement.child_by_field_name("consequence"))
-    else {
-        return;
-    };
-    let Some(declaration) = named_children(&consequence).into_iter().find(|c| !is_comment(c)) else { return };
-    if consequence.kind() != "block"
-        || declaration.kind() != "local_variable_declaration"
-        || modifiers(&declaration).is_some()
-    {
+pub fn check(statement: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::If { cond, then, .. } = &statement.kind else { return };
+    let K::Block { stmts, .. } = &then.kind else { return };
+    let Some(declaration) = stmts.iter().find(|s| !matches!(s.kind, K::Empty)) else { return };
+    let K::Vars(vars) = &declaration.kind else { return };
+    let [var] = vars.as_slice() else { return };
+    if !var.mods.annotations.is_empty() || !modifier_keywords(&var.mods, context.text, context.tokens()).is_empty() {
         return;
     }
-    let Some((name, cast)) = cast_declaration(&declaration, text) else { return };
-    for test in conjuncts(&condition, text).into_iter().filter(|t| t.kind() == "instanceof_expression") {
-        let (Some(tested), Some(test_type)) = (test.child_by_field_name("left"), test.child_by_field_name("right"))
-        else {
-            continue;
-        };
-        let matches = test.child_by_field_name("name").is_none()
-            && matches!(strip_parentheses(&tested).kind(), "identifier" | "field_access")
-            && source(&test_type, text) == cast.0
-            && source(&strip_parentheses(&tested), text) == cast.1
-            && !names_after(&condition, test.end_byte(), name, text);
+    let Some((cast_type, operand)) = cast(var, context) else { return };
+    let name = var.name.as_str();
+    let mut tests = Vec::new();
+    conjuncts(cond, &mut tests);
+    for test in tests {
+        let K::InstanceOf { expr: tested, target } = &test.kind else { continue };
+        let tested = strip_parens(tested);
+        let matches = !matches!(target.kind, K::BindingPattern { .. } | K::RecordPattern { .. })
+            && is_name_or_field(tested)
+            && context.source(target) == cast_type
+            && context.source(tested) == operand
+            && !names_after(cond, test.end, name, context);
         if matches {
-            let message = format!("instanceof and cast can be a pattern variable: instanceof {} {name}", cast.0);
+            let message = format!("instanceof and cast can be a pattern variable: instanceof {cast_type} {name}");
             let fix = vec![
-                Edit::new(test_type.end_byte()..test_type.end_byte(), format!(" {name}")),
-                Edit::new(statement_lines(&declaration, text), ""),
+                Edit::new(target.end..target.end, format!(" {name}")),
+                Edit::new(statement_lines(declaration, context.text), ""),
             ];
-            diagnostics.push(Diagnostic::new(Rule::InstanceofPattern, test.start_byte(), message).with_fix(fix));
+            diagnostics.push(Diagnostic::new(Rule::InstanceofPattern, test.start, message).with_fix(fix));
             return;
         }
     }
 }
 
-/// Whether the condition uses `name` after `position`: the pattern variable would take its place.
-fn names_after(condition: &Node, position: usize, name: &str, text: &str) -> bool {
-    let mut found = false;
-    for_each_descendant(condition, &[], |n| {
-        found |= n.kind() == "identifier" && n.start_byte() >= position && source(n, text) == name;
-    });
-    found
+/// A name or field access (`a`, `this.a`, `a.b`), not `this` or a class literal.
+fn is_name_or_field(tree: &Tree) -> bool {
+    match &tree.kind {
+        K::Ident(name) => name != "this" && name != "super",
+        K::MemberSelect { name, .. } => name != "class",
+        _ => false,
+    }
 }
 
-/// `T name = (T) x;`: the name, and the cast's type and operand.
-fn cast_declaration<'a>(declaration: &Node, text: &'a str) -> Option<(&'a str, (&'a str, &'a str))> {
-    let declarators: Vec<Node> =
-        named_children(declaration).into_iter().filter(|d| d.kind() == "variable_declarator").collect();
-    let [declarator] = declarators.as_slice() else { return None };
-    let declared_type = source(&declaration.child_by_field_name("type")?, text);
-    let cast = strip_parentheses(&declarator.child_by_field_name("value")?);
-    if cast.kind() != "cast_expression" {
-        return None;
-    }
-    let cast_type = source(&cast.child_by_field_name("type")?, text);
-    let operand = source(&strip_parentheses(&cast.child_by_field_name("value")?), text);
-    let name = source(&declarator.child_by_field_name("name")?, text);
-    (declared_type == cast_type || declared_type == "var").then_some((name, (cast_type, operand)))
+/// Whether the condition names `name` after `position`: the pattern variable would take its place.
+fn names_after(condition: &Tree, position: usize, name: &str, context: &Context) -> bool {
+    context.tokens().in_range(position..condition.end).any(|token| &context.text[token] == name)
+}
+
+/// `T name = (T) x;`: the cast's type and operand.
+fn cast<'a>(var: &crate::ast::VarDecl, context: &Context<'a>) -> Option<(&'a str, &'a str)> {
+    let K::Cast { ty, expr } = &strip_parens(var.init.as_deref()?).kind else { return None };
+    let cast_type = context.source(ty);
+    let declared_type = var.ty.as_deref().map_or("var", |t| context.source(t));
+    (declared_type == cast_type || declared_type == "var").then(|| (cast_type, context.source(strip_parens(expr))))
 }
 
 /// The operands of a condition's top-level `&&` chain (the condition itself if it is not one).
-fn conjuncts<'t>(condition: &Node<'t>, text: &str) -> Vec<Node<'t>> {
-    let condition = strip_parentheses(condition);
-    if condition.kind() == "binary_expression" && operator(&condition, text) == "&&" {
-        let sides = [condition.child_by_field_name("left"), condition.child_by_field_name("right")];
-        return sides.iter().flatten().flat_map(|side| conjuncts(side, text)).collect();
+fn conjuncts<'t>(condition: &'t Tree, operands: &mut Vec<&'t Tree>) {
+    let condition = strip_parens(condition);
+    match &condition.kind {
+        K::Binary { op, lhs, rhs } if op == "&&" => {
+            conjuncts(lhs, operands);
+            conjuncts(rhs, operands);
+        }
+        _ => operands.push(condition),
     }
-    vec![condition]
 }
 
 /// The statement's range, extended to its whole lines when nothing else is on them.
-fn statement_lines(statement: &Node, text: &str) -> std::ops::Range<usize> {
-    let line_start = text[..statement.start_byte()].rfind('\n').map_or(0, |i| i + 1);
-    let line_end = text[statement.end_byte()..].find('\n').map_or(text.len(), |i| statement.end_byte() + i + 1);
-    let alone_on_lines = text[line_start..statement.start_byte()].trim().is_empty()
-        && text[statement.end_byte()..line_end].trim().is_empty();
-    if alone_on_lines { line_start..line_end } else { statement.byte_range() }
+fn statement_lines(statement: &Tree, text: &str) -> std::ops::Range<usize> {
+    let line_start = text[..statement.start].rfind('\n').map_or(0, |i| i + 1);
+    let line_end = text[statement.end..].find('\n').map_or(text.len(), |i| statement.end + i + 1);
+    let alone_on_lines =
+        text[line_start..statement.start].trim().is_empty() && text[statement.end..line_end].trim().is_empty();
+    if alone_on_lines { line_start..line_end } else { statement.start..statement.end }
 }

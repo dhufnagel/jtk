@@ -17,124 +17,131 @@
 //! qualified, without constructor arguments unless the target type is raw as well. An on-demand import
 //! (`java.util.*`) counts, although a class of the same name in the same package would take precedence.
 
-use tree_sitter::Node;
+use std::ops::Range;
 
-use crate::lint::syntax::{declared_type, for_each_descendant, is_comment, named_children, source};
+use crate::ast::{ClassKind, K, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn check(node: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    match node.kind() {
-        "local_variable_declaration" | "field_declaration" | "constant_declaration" => {
-            let Some(target) = node.child_by_field_name("type") else { return };
-            for declarator in node.children_by_field_name("declarator", &mut node.walk()) {
-                if let Some(value) = declarator.child_by_field_name("value")
-                    && declarator.child_by_field_name("dimensions").is_none()
+use super::shared_b::declared_type;
+
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    match &tree.kind {
+        K::Vars(vars) => {
+            for var in vars {
+                if let (Some(value), Some(target)) = (&var.init, &var.ty)
+                    && target.end <= var.name_pos
                 {
-                    check_creation(&value, &target, text, diagnostics);
+                    check_creation(value, target, context, diagnostics);
                 }
             }
         }
-        "assignment_expression" => {
-            let (Some(left), Some(value)) = (node.child_by_field_name("left"), node.child_by_field_name("right"))
-            else {
-                return;
-            };
-            if value.kind() != "object_creation_expression"
-                || node.child_by_field_name("operator").is_none_or(|o| o.kind() != "=")
-            {
-                return;
-            }
-            let target = match left.kind() {
-                "identifier" => declared_type(&left, source(&left, text), text),
-                "field_access" if left.child_by_field_name("object").is_some_and(|o| o.kind() == "this") => {
-                    left.child_by_field_name("field").and_then(|f| field_type(node, source(&f, text), text))
+        K::Assign { op, lhs, rhs } if op == "=" && matches!(rhs.kind, K::NewClass { .. }) => {
+            let target = match &lhs.kind {
+                K::Ident(name) => declared_type(tree, &context.ancestors, name, context),
+                K::MemberSelect { expr, name } if matches!(&expr.kind, K::Ident(this) if this == "this") => {
+                    field_type(tree, &context.ancestors, name)
                 }
                 _ => None,
             };
             if let Some(target) = target {
-                check_creation(&value, &target, text, diagnostics);
+                check_creation(rhs, target, context, diagnostics);
             }
         }
-        "return_statement" => {
-            let Some(value) = node.named_child(0).filter(|v| v.kind() == "object_creation_expression") else { return };
-            if let Some(target) = return_type(node) {
-                check_creation(&value, &target, text, diagnostics);
+        K::Return(Some(value)) if matches!(value.kind, K::NewClass { .. }) => {
+            if let Some(target) = return_type(tree, &context.ancestors) {
+                check_creation(value, target, context, diagnostics);
             }
         }
         _ => {}
     }
 }
 
-fn check_creation(value: &Node, target: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if value.kind() != "object_creation_expression"
-        || value.child_by_field_name("type_arguments").is_some()
-        || named_children(value).iter().any(|c| c.kind() == "class_body")
-        || source(target, text) == "var"
-    {
+fn check_creation(value: &Tree, target: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::NewClass { type_args, ident, args, body: None, .. } = &value.kind else { return };
+    if !type_args.is_empty() {
         return;
     }
-    let Some(created) = value.child_by_field_name("type") else { return };
-    let has_arguments = value.child_by_field_name("arguments").is_some_and(|a| a.named_child_count() > 0);
-    let target_arguments = type_arguments(target);
-    if created.kind() == "generic_type" {
-        let Some(arguments) = type_arguments(&created).filter(|a| a.named_child_count() > 0) else { return };
+    let created = match &ident.kind {
+        K::Annotated { base, .. } => base,
+        _ => ident,
+    };
+    let has_arguments = !args.is_empty();
+    let target_arguments = type_arguments(target, context);
+    if let K::Parameterized { args: created_arguments, .. } = &created.kind {
+        let Some(arguments) = type_arguments(created, context).filter(|_| !created_arguments.is_empty()) else {
+            return;
+        };
         let Some(target_arguments) = target_arguments else { return };
-        let target_arguments = normalized(&target_arguments, text);
-        if has_arguments && (normalized(&arguments, text) != target_arguments || target_arguments.contains('?')) {
+        let target_arguments = normalized(&context.text[target_arguments]);
+        if has_arguments
+            && (normalized(&context.text[arguments.clone()]) != target_arguments || target_arguments.contains('?'))
+        {
             return;
         }
         let message = "Type arguments can be inferred: use <>";
-        let diagnostic = Diagnostic::new(Rule::DiamondOperator, arguments.start_byte(), message);
-        let mut has_comment = false;
-        for_each_descendant(&arguments, &[], |n| has_comment |= is_comment(n));
-        diagnostics.push(if has_comment {
+        let diagnostic = Diagnostic::new(Rule::DiamondOperator, arguments.start, message);
+        diagnostics.push(if context.tokens().has_comment(arguments.clone()) {
             diagnostic
         } else {
-            diagnostic.with_fix(vec![Edit::new(arguments.byte_range(), "<>")])
+            diagnostic.with_fix(vec![Edit::new(arguments, "<>")])
         });
-    } else if (!has_arguments || target_arguments.is_none()) && is_known_generic(&created, text) {
-        let fix = Edit::new(created.end_byte()..created.end_byte(), "<>");
+    } else if (!has_arguments || target_arguments.is_none()) && is_known_generic(created, context) {
+        let fix = Edit::new(created.end..created.end, "<>");
         let message = "Raw type can be avoided: use <>";
-        diagnostics.push(Diagnostic::new(Rule::DiamondOperator, created.start_byte(), message).with_fix(vec![fix]));
+        diagnostics.push(Diagnostic::new(Rule::DiamondOperator, created.start, message).with_fix(vec![fix]));
     }
 }
 
-/// The type arguments of a generic type (`List<String>`, `Map.Entry<K, V>`).
-fn type_arguments<'t>(generic: &Node<'t>) -> Option<Node<'t>> {
-    if generic.kind() != "generic_type" {
-        return None;
-    }
-    named_children(generic).into_iter().find(|c| c.kind() == "type_arguments")
+/// The range of the type arguments of a generic type (`List<String>`, `Map.Entry<K, V>`), from `<` to `>`.
+fn type_arguments(generic: &Tree, context: &Context) -> Option<Range<usize>> {
+    let K::Parameterized { base, .. } = &generic.kind else { return None };
+    let open = context.tokens().next(base.end)?;
+    Some(open.start..generic.end)
 }
 
-fn normalized(node: &Node, text: &str) -> String {
-    source(node, text).split_whitespace().collect()
+fn normalized(code: &str) -> String {
+    code.split_whitespace().collect()
 }
 
-/// The declared type of a field of the class enclosing `node`, if the class declares it.
-fn field_type<'t>(node: &Node<'t>, name: &str, text: &str) -> Option<Node<'t>> {
-    let body = std::iter::successors(node.parent(), |n| n.parent())
-        .find(|n| matches!(n.kind(), "class_body" | "enum_body_declarations"))?;
-    named_children(&body).into_iter().filter(|m| m.kind() == "field_declaration").find_map(|field| {
-        field
-            .children_by_field_name("declarator", &mut field.walk())
-            .any(|d| {
-                d.child_by_field_name("dimensions").is_none()
-                    && d.child_by_field_name("name").is_some_and(|n| source(&n, text) == name)
-            })
-            .then(|| field.child_by_field_name("type"))
-            .flatten()
-    })
+/// The declared type of the field `name` of the class body enclosing `tree`, if the body declares it.
+fn field_type<'t>(tree: &'t Tree, ancestors: &[&'t Tree], name: &str) -> Option<&'t Tree> {
+    let mut child = tree;
+    let body = ancestors.iter().rev().find_map(|&parent| {
+        let is_child = |t: &Tree| std::ptr::eq(t, child);
+        let body = match &parent.kind {
+            K::Class(class) if !matches!(class.kind, ClassKind::Interface | ClassKind::Annotation) => {
+                let constant_body =
+                    class.enum_constants.iter().find_map(|c| c.body.as_deref().filter(|b| b.iter().any(is_child)));
+                constant_body.or_else(|| class.members.iter().any(is_child).then_some(&class.members[..]))
+            }
+            K::NewClass { body: Some(body), .. } if body.iter().any(is_child) => Some(&body[..]),
+            _ => None,
+        };
+        child = parent;
+        body
+    })?;
+    body.iter()
+        .find_map(|member| match &member.kind {
+            K::Vars(vars) => vars.iter().find(|v| v.name == name && v.ty.as_ref().is_some_and(|t| t.end <= v.name_pos)),
+            _ => None,
+        })?
+        .ty
+        .as_deref()
 }
 
 /// The return type of the method that a `return` statement returns from, unless it is in a lambda.
-fn return_type<'t>(statement: &Node<'t>) -> Option<Node<'t>> {
-    let method = std::iter::successors(statement.parent(), |n| n.parent()).find(|n| {
-        matches!(n.kind(), "method_declaration" | "lambda_expression" | "class_body" | "constructor_declaration")
-    })?;
-    (method.kind() == "method_declaration" && method.child_by_field_name("dimensions").is_none())
-        .then(|| method.child_by_field_name("type"))
-        .flatten()
+fn return_type<'t>(statement: &'t Tree, ancestors: &[&'t Tree]) -> Option<&'t Tree> {
+    let mut child = statement;
+    for &parent in ancestors.iter().rev() {
+        match &parent.kind {
+            K::Method(method) => return method.ret.as_deref().filter(|r| r.end <= method.name_pos),
+            K::Lambda { .. } | K::Class(_) => return None,
+            K::NewClass { body: Some(body), .. } if body.iter().any(|m| std::ptr::eq(m, child)) => return None,
+            _ => child = parent,
+        }
+    }
+    None
 }
 
 /// Generic classes of `java.util` and `java.util.concurrent` that are often created with raw types.
@@ -170,8 +177,8 @@ const GENERIC_CLASSES: &[(&str, &str)] = &[
 
 /// Whether the raw type is one of [`GENERIC_CLASSES`]: written fully qualified, or imported (by name or on demand)
 /// or from `java.lang`, and not declared in the file.
-fn is_known_generic(created: &Node, text: &str) -> bool {
-    let written = source(created, text);
+fn is_known_generic(created: &Tree, context: &Context) -> bool {
+    let written = context.source(created);
     let Some((package, name)) = GENERIC_CLASSES.iter().find(|(package, name)| {
         *name == written || written.strip_prefix(package).and_then(|w| w.strip_prefix('.')) == Some(name)
     }) else {
@@ -180,13 +187,14 @@ fn is_known_generic(created: &Node, text: &str) -> bool {
     if written != *name {
         return true;
     }
-    let root = std::iter::successors(Some(*created), |n| n.parent()).last().unwrap_or(*created);
+    let K::CompilationUnit { imports, .. } = &context.ancestors[0].kind else { return false };
     let imported = *package == "java.lang"
-        || named_children(&root).iter().filter(|i| i.kind() == "import_declaration").any(|import| {
-            let import: String = source(import, text).split_whitespace().collect();
-            import == format!("import{package}.{name};") || import == format!("import{package}.*;")
+        || imports.iter().any(|import| {
+            let K::Import { is_static: false, name: imported } = &import.kind else { return false };
+            let imported = normalized(context.source(imported));
+            imported == format!("{package}.{name}") || imported == format!("{package}.*")
         });
-    imported && !declares_type(text, name)
+    imported && !declares_type(context.text, name)
 }
 
 /// Whether the text may declare a type of that name (also in comments).
