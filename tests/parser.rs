@@ -53,6 +53,8 @@ fn same_trees_for_constructs_with_tree_sitter_quirks() {
         "class A { void f() { x >>= 1; y = a >> b >>> c >= d ? -1 : -1L; z = List.<String>of(); w = String[]::new; v = int[].class; u = List<String>::size; } }",
         // Lambdas, casts of lambdas, anonymous and inner classes, array creation.
         "class A { void f() { g((a, b) -> a, (int c) -> { }, () -> d, (Runnable) () -> {}, x -> x); new B<>() {}; o.new C(); new int[3][]; new @A int @B [] {1}; } }",
+        // Constructor type arguments.
+        "class A { Object o = new <String>Object(), p = new <T>K<U>() {}, q = a.new <T>B(); }",
         // Empty input and comments only.
         "",
         "  // comment\n",
@@ -69,7 +71,6 @@ fn rejects_what_tree_sitter_rejects() {
         "interface I implements J {}",
         "class A { void f() { this(1); } }",
         "class A { void f() { switch (x) { case 1: break; default -> {} } } }",
-        "class A { Object o = new <String>Object(); }",
         "class A { Object o = (G[]) -h; }",
         "class A { Object o = (G<T>) +h; }",
     ] {

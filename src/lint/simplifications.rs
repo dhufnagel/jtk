@@ -14,7 +14,7 @@ mod nested_block;
 mod null_check_before_instanceof;
 mod redundant_modifier;
 mod simplify_boolean_expression;
-mod simplify_boolean_return;
+pub(super) mod simplify_boolean_return;
 mod super_constructor_call;
 mod unnecessary_instantiation;
 mod unnecessary_parentheses;
@@ -31,7 +31,6 @@ pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
         &["if_statement", "for_statement", "enhanced_for_statement", "while_statement", "do_statement"],
         missing_braces::check,
     ),
-    (Rule::SimplifyBooleanReturn, &["if_statement"], simplify_boolean_return::check),
     (
         Rule::SimplifyBooleanExpression,
         &["binary_expression", "unary_expression", "ternary_expression"],

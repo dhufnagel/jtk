@@ -6,7 +6,7 @@ mod covariant_equals;
 mod default_comes_last;
 mod double_brace_initialization;
 mod double_checked_locking;
-mod empty_catch;
+pub(super) mod empty_catch;
 mod equals_avoid_null;
 mod equals_hash_code;
 mod equals_null;
@@ -25,8 +25,8 @@ mod modified_control_variable;
 mod null_check;
 mod parameter_assignment;
 mod pattern_variable_assignment;
-mod string_literal_equality;
-mod unused_local_variable;
+pub(super) mod string_literal_equality;
+pub(super) mod unused_local_variable;
 mod unused_private_member;
 
 mod print_stack_trace;
@@ -38,9 +38,7 @@ use super::{Check, ConfiguredCheck, Rule};
 pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
     (Rule::EqualsHashCode, &["class_body", "enum_body_declarations"], equals_hash_code::check),
     (Rule::CovariantEquals, &["class_body", "enum_body_declarations"], covariant_equals::check),
-    (Rule::EmptyCatch, &["catch_clause"], empty_catch::check),
     (Rule::FallThrough, &["switch_block"], fall_through::check),
-    (Rule::StringLiteralEquality, &["binary_expression"], string_literal_equality::check),
     (Rule::EqualsNull, &["method_invocation"], equals_null::check),
     (Rule::FinallyExit, &["finally_clause"], finally_exit::check),
     (Rule::IdenticalOperands, &["binary_expression", "assignment_expression"], identical_operands::check),
@@ -49,17 +47,6 @@ pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
     (Rule::NullCheck, &["binary_expression"], null_check::check),
     (Rule::BigDecimalDouble, &["object_creation_expression"], big_decimal_double::check),
     (Rule::DoubleCheckedLocking, &["if_statement"], double_checked_locking::check),
-    (
-        Rule::UnusedLocalVariable,
-        &[
-            "local_variable_declaration",
-            "enhanced_for_statement",
-            "instanceof_expression",
-            "type_pattern",
-            "record_pattern_component",
-        ],
-        unused_local_variable::check,
-    ),
     (Rule::UnusedPrivateMember, &["program"], unused_private_member::check),
     (
         Rule::MissingSwitchDefault,

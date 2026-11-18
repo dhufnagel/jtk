@@ -137,13 +137,7 @@ pub fn for_each_descendant_with_parent<'t>(node: &Node<'t>, mut f: impl FnMut(&N
     }
 }
 
-/// Whether an identifier refers to a variable or field by its simple name, rather than declaring something, naming a
-/// method, label or annotation element, or selecting a member (`a.x`).
-pub fn is_name_reference(identifier: &Node) -> bool {
-    identifier.parent().is_none_or(|parent| is_name_reference_in(identifier, &parent))
-}
-
-/// [`is_name_reference`] for an identifier whose parent is known.
+/// Whether the identifier (with the parent) is the name of a variable, not of a type, method or label.
 pub fn is_name_reference_in(identifier: &Node, parent: &Node) -> bool {
     let is_field = |name| parent.child_by_field_name(name) == Some(*identifier);
     match parent.kind() {
@@ -180,21 +174,6 @@ pub fn is_name_reference_in(identifier: &Node, parent: &Node) -> bool {
         | "annotation"
         | "marker_annotation" => false,
         _ => true,
-    }
-}
-
-/// Whether the identifier is only written: the target of a plain assignment, or incremented (`i++`) without using
-/// the result. Like Checkstyle, a compound assignment (`x += 1`) counts as a use.
-pub fn is_only_written(identifier: &Node, text: &str) -> bool {
-    let Some(parent) = identifier.parent() else { return false };
-    match parent.kind() {
-        "assignment_expression" => {
-            parent.child_by_field_name("left") == Some(*identifier) && operator(&parent, text) == "="
-        }
-        "update_expression" => {
-            parent.parent().is_some_and(|p| matches!(p.kind(), "expression_statement" | "for_statement"))
-        }
-        _ => false,
     }
 }
 

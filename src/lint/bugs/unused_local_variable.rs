@@ -6,27 +6,51 @@
 //! variables only its declarator. Unsafe because a name in the value could be a field whose access loads a class.
 //! Eclipse also removes assignments; jtk leaves such variables.
 
-use tree_sitter::Node;
+use std::ops::Range;
 
-use crate::lint::syntax::{
-    has_comment, is_name_reference, is_only_written, is_side_effect_free, line_removal_range, named_children, operator,
-    source, strip_parentheses,
-};
+use crate::ast::{CaseKind, ClassKind, K, LitKind, Tree, VarDecl};
+use crate::lint::syntax::span_removal_range;
+use crate::lint::tree::{Context, has_comment, in_type, path_to, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn check(node: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    for (name, scope) in declared_variables(node, text) {
-        let variable = source(&name, text);
-        if variable == "_" {
+/// Where a variable is visible: a range of the source below a tree.
+struct Scope<'t> {
+    root: &'t Tree,
+    range: Range<usize>,
+}
+
+impl<'t> Scope<'t> {
+    fn of(tree: &'t Tree) -> Scope<'t> {
+        Scope { root: tree, range: tree.start..tree.end }
+    }
+}
+
+pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
+    let text = context.text;
+    let declared: Vec<(&VarDecl, Scope)> = match &tree.kind {
+        K::Vars(vars) => {
+            let scope = match context.parent() {
+                Some(parent @ Tree { kind: K::Block { .. } | K::For { .. }, .. }) => Scope::of(parent),
+                Some(parent @ Tree { kind: K::Switch { .. } | K::SwitchExpr { .. }, .. }) => Scope::of(parent),
+                _ => return,
+            };
+            vars.iter().map(|v| (v, Scope { root: scope.root, range: scope.range.clone() })).collect()
+        }
+        K::ForEach { var, .. } => vec![(&**var, Scope::of(tree))],
+        K::BindingPattern { var } => vec![(&**var, pattern_scope(tree, &context.ancestors))],
+        _ => return,
+    };
+    for (var, scope) in declared {
+        if var.name == "_" {
             continue;
         }
-        let references = references(variable, &scope, name.end_byte(), text);
+        let references = references(&var.name, &scope, var.name_pos + var.name.len(), text);
         if references.read {
             continue;
         }
-        let message = format!("Unused local variable '{variable}'");
-        let diagnostic = Diagnostic::new(Rule::UnusedLocalVariable, name.start_byte(), message);
-        let fix = if references.written { None } else { removal(node, &name, text) };
+        let message = format!("Unused local variable '{}'", var.name);
+        let diagnostic = Diagnostic::new(Rule::UnusedLocalVariable, var.name_pos, message);
+        let fix = if references.written { None } else { removal(tree, var, context) };
         diagnostics.push(match fix {
             Some(edit) => diagnostic.with_unsafe_fix(vec![edit]),
             None => diagnostic,
@@ -34,77 +58,96 @@ pub fn check(node: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
     }
 }
 
-/// The edit that removes the declaration of the variable `name` from a local variable declaration statement, if its
-/// value has no side effects.
-fn removal(declaration: &Node, name: &Node, text: &str) -> Option<Edit> {
-    if declaration.kind() != "local_variable_declaration" || has_comment(declaration) {
+/// The edit that removes the declaration of `var` from a local variable declaration statement, if its value has no
+/// side effects.
+fn removal(declaration: &Tree, var: &VarDecl, context: &Context) -> Option<Edit> {
+    let K::Vars(declarators) = &declaration.kind else { return None };
+    let text = context.text;
+    if has_comment(text, declaration.start..declaration.end) {
         return None;
     }
-    let in_statement_list = declaration
-        .parent()
-        .is_some_and(|p| matches!(p.kind(), "block" | "constructor_body" | "switch_block_statement_group"));
-    let declarators: Vec<Node> =
-        named_children(declaration).into_iter().filter(|d| d.kind() == "variable_declarator").collect();
-    let index = declarators.iter().position(|d| d.child_by_field_name("name") == Some(*name))?;
-    let declarator = declarators[index];
-    let value_is_pure = declarator.child_by_field_name("value").is_none_or(|v| is_side_effect_free(&v));
+    let in_statement_list =
+        context.parent().is_some_and(|p| matches!(p.kind, K::Block { .. } | K::Switch { .. } | K::SwitchExpr { .. }));
+    let value_is_pure = var.init.as_deref().is_none_or(|v| is_side_effect_free(v, text));
     if !in_statement_list || !value_is_pure {
         return None;
     }
-    let range = match (index.checked_sub(1).map(|i| declarators[i]), declarators.get(index + 1)) {
-        (_, Some(next)) => declarator.start_byte()..next.start_byte(),
-        (Some(previous), None) => previous.end_byte()..declarator.end_byte(),
-        (None, None) => line_removal_range(declaration, text),
+    let index = declarators.iter().position(|d| std::ptr::eq(d, var))?;
+    let range = match (index.checked_sub(1).map(|i| &declarators[i]), declarators.get(index + 1)) {
+        (_, Some(next)) => var.name_pos..next.name_pos,
+        (Some(previous), None) => previous.end..var.end,
+        (None, None) => span_removal_range(declaration.start..declaration.end, text),
     };
     Some(Edit::new(range, ""))
 }
 
-/// The names the node declares, each with the node it is visible in.
-fn declared_variables<'t>(node: &Node<'t>, text: &str) -> Vec<(Node<'t>, Node<'t>)> {
-    let Some(parent) = node.parent() else { return Vec::new() };
-    match node.kind() {
-        "local_variable_declaration" => {
-            // A variable declared in a case is visible in the following cases too.
-            let scope = if parent.kind() == "switch_block_statement_group" {
-                parent.parent().unwrap_or(parent)
-            } else {
-                parent
-            };
-            let declarators = named_children(node).into_iter().filter(|d| d.kind() == "variable_declarator");
-            declarators.filter_map(|d| d.child_by_field_name("name")).map(|n| (n, scope)).collect()
+/// Whether evaluating the expression has no effect: a name, a literal or a field of one.
+fn is_side_effect_free(expression: &Tree, text: &str) -> bool {
+    let literal = || &text[expression.start..expression.end];
+    match &expression.kind {
+        K::Ident(name) => name != "super",
+        K::Literal(LitKind::Null | LitKind::Boolean | LitKind::String | LitKind::Char) => true,
+        // Like tree-sitter's decimal and hex integer literals and decimal floating point literals.
+        K::Literal(LitKind::Int | LitKind::Long) => {
+            let literal = literal();
+            !literal.starts_with('0') || literal.len() == 1 || literal[1..].starts_with(['l', 'L', 'x', 'X'])
         }
-        "enhanced_for_statement" => node.child_by_field_name("name").map(|n| (n, *node)).into_iter().collect(),
-        "instanceof_expression" => {
-            node.child_by_field_name("name").map(|n| (n, pattern_scope(node, text))).into_iter().collect()
-        }
-        "type_pattern" | "record_pattern_component" => {
-            let name = named_children(node).into_iter().last().filter(|n| n.kind() == "identifier");
-            name.map(|n| (n, pattern_scope(node, text))).into_iter().collect()
-        }
-        _ => Vec::new(),
+        K::Literal(LitKind::Float | LitKind::Double) => !literal().starts_with("0x") && !literal().starts_with("0X"),
+        K::MemberSelect { expr, name } => name != "class" && is_side_effect_free(expr, text),
+        K::Parens(_) => is_side_effect_free(strip_parens(expression), text),
+        _ => false,
     }
 }
 
 /// Where a pattern variable is visible: its `case`, or the statement with the `instanceof`. After an
 /// `if (!(o instanceof T t))`, `t` stays visible in the rest of the block.
-fn pattern_scope<'t>(pattern: &Node<'t>, text: &str) -> Node<'t> {
-    let mut ancestors = std::iter::successors(pattern.parent(), |n| n.parent());
-    let Some(statement) = ancestors.find(|n| {
-        matches!(n.kind(), "switch_rule" | "switch_block_statement_group" | "lambda_expression")
-            || n.parent()
-                .is_some_and(|p| matches!(p.kind(), "block" | "constructor_body" | "switch_block_statement_group"))
-    }) else {
-        return *pattern;
-    };
-    let in_negated_condition = statement.kind() == "if_statement"
-        && statement.child_by_field_name("condition").is_some_and(|c| {
-            let condition = strip_parentheses(&c);
-            condition.kind() == "unary_expression" && operator(&condition, text) == "!"
-        });
-    match statement.parent() {
-        Some(block) if in_negated_condition => block,
-        _ => statement,
+fn pattern_scope<'t>(pattern: &'t Tree, ancestors: &[&'t Tree]) -> Scope<'t> {
+    let chain: Vec<&Tree> = ancestors.iter().copied().chain([pattern]).collect();
+    for index in (0..chain.len() - 1).rev() {
+        let (node, child) = (chain[index], chain[index + 1]);
+        // A case is between a switch and the trees in it.
+        if let Some(range) = case_range(node, child) {
+            return Scope { root: node, range };
+        }
+        let parent = index.checked_sub(1).map(|i| chain[i]);
+        let in_list = parent.is_some_and(|p| is_in_statement_list(p, node));
+        if !matches!(node.kind, K::Lambda { .. }) && !in_list {
+            continue;
+        }
+        let in_negated_condition = matches!(&node.kind, K::If { cond, .. }
+            if matches!(&strip_parens(cond).kind, K::Unary { op, .. } if op == "!"));
+        let Some(parent) = parent.filter(|_| in_negated_condition) else { return Scope::of(node) };
+        return match case_range(parent, node) {
+            Some(range) => Scope { root: parent, range },
+            None => Scope::of(parent),
+        };
     }
+    Scope::of(pattern)
+}
+
+/// Whether the statement is in a block or in the statements of a `case ... :`.
+fn is_in_statement_list(parent: &Tree, statement: &Tree) -> bool {
+    match &parent.kind {
+        K::Block { .. } => true,
+        K::Switch { cases, .. } | K::SwitchExpr { cases, .. } => {
+            cases.iter().any(|c| c.kind == CaseKind::Statement && c.stmts.iter().any(|s| std::ptr::eq(s, statement)))
+        }
+        _ => false,
+    }
+}
+
+/// The range of the case of the switch that `child` is in, if `node` is a switch.
+fn case_range(node: &Tree, child: &Tree) -> Option<Range<usize>> {
+    let (K::Switch { cases, .. } | K::SwitchExpr { cases, .. }) = &node.kind else { return None };
+    let is = |t: &Tree| std::ptr::eq(t, child);
+    let case = cases.iter().find(|c| {
+        c.labels.iter().any(is)
+            || c.guard.as_deref().is_some_and(is)
+            || c.stmts.iter().any(is)
+            || c.body.as_deref().is_some_and(is)
+    })?;
+    let ends = case.labels.iter().chain(case.guard.as_deref()).chain(&case.stmts).chain(case.body.as_deref());
+    Some(case.start..ends.map(|t| t.end).max().unwrap_or(case.start))
 }
 
 #[derive(Default)]
@@ -117,28 +160,31 @@ struct References {
 /// declares the same name refers to its own variable.
 ///
 /// Only identifiers spelled like the variable can refer to it, so its occurrences are found in the text instead of
-/// walking the scope: an occurrence counts if the scope's smallest node around it is exactly an identifier.
-fn references(variable: &str, scope: &Node, after: usize, text: &str) -> References {
+/// walking the scope: an occurrence counts if the scope's smallest tree around it is exactly an identifier.
+fn references(variable: &str, scope: &Scope, after: usize, text: &str) -> References {
     let mut references = References::default();
-    let start = after.max(scope.start_byte());
-    let end = scope.end_byte();
+    let start = after.max(scope.range.start);
+    let end = scope.range.end;
     if start >= end || variable.is_empty() {
         return references;
     }
-    // Class bodies (by id) already checked for declaring the variable.
-    let mut class_bodies: Vec<(usize, bool)> = Vec::new();
+    // Classes already checked for declaring the variable.
+    let mut classes: Vec<(*const Tree, bool)> = Vec::new();
     let mut from = start;
     while let Some(i) = text[from..end].find(variable) {
         let position = from + i;
         from = position + variable.len();
-        let Some(node) = scope.descendant_for_byte_range(position, from) else { continue };
-        if node.kind() != "identifier" || node.start_byte() != position || node.end_byte() != from {
+        let path = path_to(scope.root, position..from);
+        let Some((&identifier, ancestors)) = path.split_last() else { continue };
+        if !matches!(identifier.kind, K::Ident(_)) || identifier.start != position || identifier.end != from {
             continue;
         }
-        if in_shadowing_class(&node, scope, variable, text, &mut class_bodies) || !is_name_reference(&node) {
+        if in_shadowing_class(&path, variable, &mut classes) || !is_name_reference(scope.root, &path) {
             continue;
         }
-        if is_only_written(&node, text) {
+        let parent = ancestors.last().copied().unwrap_or(scope.root);
+        let grandparent = ancestors.len().checked_sub(2).map_or(scope.root, |i| ancestors[i]);
+        if is_only_written(identifier, parent, grandparent) {
             references.written = true;
         } else {
             references.read = true;
@@ -148,48 +194,90 @@ fn references(variable: &str, scope: &Node, after: usize, text: &str) -> Referen
     references
 }
 
-/// Whether the identifier is inside a class body (within the scope) that declares a variable of the same name.
-fn in_shadowing_class(
-    identifier: &Node,
-    scope: &Node,
-    variable: &str,
-    text: &str,
-    checked: &mut Vec<(usize, bool)>,
-) -> bool {
-    let mut ancestor = identifier.parent();
-    while let Some(node) = ancestor {
-        if node.id() == scope.id() {
-            return false;
-        }
-        if node.kind() == "class_body" {
-            let declares = match checked.iter().find(|(id, _)| *id == node.id()) {
-                Some(&(_, declares)) => declares,
-                None => {
-                    let declares = declares(&node, variable, text);
-                    checked.push((node.id(), declares));
-                    declares
-                }
-            };
-            if declares {
-                return true;
+/// Whether the identifier at the end of the path is the name of a variable, not of a type, method or label.
+fn is_name_reference(root: &Tree, path: &[&Tree]) -> bool {
+    let identifier = path[path.len() - 1];
+    let parent = path.len().checked_sub(2).map_or(root, |i| path[i]);
+    match &parent.kind {
+        K::MethodInvocation { select, .. } if std::ptr::eq(&**select, identifier) => return false,
+        K::Assign { lhs, .. } if std::ptr::eq(&**lhs, identifier) => {
+            let grandparent = path.len().checked_sub(3).map_or(root, |i| path[i]);
+            if matches!(grandparent.kind, K::Annotation { .. }) {
+                return false;
             }
         }
-        ancestor = node.parent();
+        _ => {}
+    }
+    !in_type(root, path)
+}
+
+/// Whether the identifier is only written: the target of a plain assignment, or incremented (`i++`) without using
+/// the result. Like Checkstyle, a compound assignment (`x += 1`) counts as a use.
+fn is_only_written(identifier: &Tree, parent: &Tree, grandparent: &Tree) -> bool {
+    match &parent.kind {
+        K::Assign { op, lhs, .. } => std::ptr::eq(&**lhs, identifier) && op == "=",
+        // As a statement: also the body of a `case ->`, which tree-sitter wraps in an expression statement.
+        K::Unary { op, .. } if op == "++" || op == "--" => match &grandparent.kind {
+            K::ExprStmt(_) | K::For { .. } => true,
+            K::Switch { cases, .. } | K::SwitchExpr { cases, .. } => {
+                cases.iter().any(|c| c.body.as_deref().is_some_and(|b| std::ptr::eq(b, parent)))
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+/// Whether the identifier at the end of the path is in the body of a class (below the path's root) that declares a
+/// variable of the same name.
+fn in_shadowing_class(path: &[&Tree], variable: &str, checked: &mut Vec<(*const Tree, bool)>) -> bool {
+    for (index, &tree) in path.iter().enumerate().rev().skip(1) {
+        let child = path[index + 1];
+        let Some(body) = class_body(tree, child) else { continue };
+        let declares = match checked.iter().find(|(t, _)| std::ptr::eq(*t, tree)) {
+            Some(&(_, declares)) => declares,
+            None => {
+                let declares = body.iter().any(|m| declares(m, variable));
+                checked.push((tree, declares));
+                declares
+            }
+        };
+        if declares {
+            return true;
+        }
     }
     false
 }
 
-fn declares(class_body: &Node, variable: &str, text: &str) -> bool {
-    let mut pending = named_children(class_body);
-    while let Some(node) = pending.pop() {
-        let name = match node.kind() {
-            "variable_declarator" | "formal_parameter" => node.child_by_field_name("name"),
-            _ => None,
-        };
-        if name.is_some_and(|n| source(&n, text) == variable) {
-            return true;
+/// The members of the class body of `tree` that `child` is in, if any: the body of a class or record, of an
+/// anonymous class or of an enum constant (not of an interface or enum, as tree-sitter has other kinds of bodies for
+/// them).
+fn class_body<'t>(tree: &'t Tree, child: &Tree) -> Option<&'t [Tree]> {
+    let is = |t: &Tree| std::ptr::eq(t, child);
+    match &tree.kind {
+        K::Class(class) if matches!(class.kind, ClassKind::Class | ClassKind::Record) => {
+            class.members.iter().any(is).then_some(&class.members[..])
         }
-        pending.extend(named_children(&node));
+        K::Class(class) if class.kind == ClassKind::Enum => {
+            class.enum_constants.iter().filter_map(|c| c.body.as_deref()).find(|body| body.iter().any(is))
+        }
+        K::NewClass { body: Some(body), .. } => body.iter().any(is).then_some(&body[..]),
+        _ => None,
     }
-    false
+}
+
+/// Whether the tree declares a field, local variable or parameter named `variable` (as tree-sitter's variable
+/// declarators and formal parameters: not resources, catch, `for` or pattern variables or untyped lambda parameters).
+fn declares(tree: &Tree, variable: &str) -> bool {
+    let named = |v: &VarDecl| v.name == variable;
+    let here = match &tree.kind {
+        K::Vars(vars) => vars.iter().any(named),
+        K::Method(method) => method.params.iter().any(named),
+        K::Lambda { params, .. } => params.iter().any(|p| p.ty.is_some() && named(p)),
+        K::Class(class) => class.record_components.iter().any(named),
+        _ => false,
+    };
+    let mut found = here;
+    tree.for_each_child(&mut |child| found = found || declares(child, variable));
+    found
 }

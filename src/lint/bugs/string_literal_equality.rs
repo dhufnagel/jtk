@@ -4,58 +4,48 @@
 //! Unsafe fix: `"a".equals(s)` (`!"a".equals(s)` for `!=`), with the literal (or the concatenation with one) first so
 //! that a null operand gives `false` as before. It changes the result where identity was meant (interned strings).
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{is_comment, named_children, operator, source};
+use crate::ast::{K, LitKind, Tree};
+use crate::lint::tree::{Context, first_token, has_comment};
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn check(binary: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let operator_text = operator(binary, text);
-    if !matches!(operator_text, "==" | "!=") {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Binary { op, lhs: left, rhs: right } = &tree.kind else { return };
+    if !matches!(op.as_str(), "==" | "!=") || !is_string(left) && !is_string(right) {
         return;
     }
-    let (Some(left), Some(right)) = (binary.child_by_field_name("left"), binary.child_by_field_name("right")) else {
-        return;
-    };
-    if !is_string(&left, text) && !is_string(&right, text) {
-        return;
-    }
-    let operator = binary.child_by_field_name("operator").unwrap_or(*binary);
+    let text = context.text;
+    let operator = first_token(text, left.end..right.start).map_or(tree.start, |o| o.start);
     let message = "String literal compared with == or != instead of equals()";
-    let diagnostic = Diagnostic::new(Rule::StringLiteralEquality, operator.start_byte(), message);
+    let diagnostic = Diagnostic::new(Rule::StringLiteralEquality, operator, message);
     // Comments between the operands would be lost.
-    if named_children(binary).iter().any(is_comment) {
+    if has_comment(text, left.end..right.start) {
         diagnostics.push(diagnostic);
         return;
     }
     // A plain literal is the best receiver, then a concatenation with one.
     let (receiver, argument) =
-        if left.kind() == "string_literal" || (right.kind() != "string_literal" && is_string(&left, text)) {
-            (left, right)
-        } else {
-            (right, left)
-        };
-    let receiver_code = source(&receiver, text);
-    let receiver_code = if matches!(receiver.kind(), "string_literal" | "parenthesized_expression") {
+        if is_literal(left) || (!is_literal(right) && is_string(left)) { (left, right) } else { (right, left) };
+    let receiver_code = context.source(receiver);
+    let receiver_code = if is_literal(receiver) || matches!(receiver.kind, K::Parens(_)) {
         receiver_code.to_string()
     } else {
         format!("({receiver_code})")
     };
-    let negation = if operator_text == "!=" { "!" } else { "" };
-    let replacement = format!("{negation}{receiver_code}.equals({})", source(&argument, text));
-    diagnostics.push(diagnostic.with_unsafe_fix(vec![Edit::new(binary.byte_range(), replacement)]));
+    let negation = if op == "!=" { "!" } else { "" };
+    let replacement = format!("{negation}{receiver_code}.equals({})", context.source(argument));
+    diagnostics.push(diagnostic.with_unsafe_fix(vec![Edit::new(tree.start..tree.end, replacement)]));
+}
+
+fn is_literal(tree: &Tree) -> bool {
+    matches!(tree.kind, K::Literal(LitKind::String))
 }
 
 /// A string literal, or a concatenation with one.
-fn is_string(operand: &Node, text: &str) -> bool {
-    match operand.kind() {
-        "string_literal" => true,
-        "parenthesized_expression" => named_children(operand).iter().any(|o| is_string(o, text)),
-        "binary_expression" if operator(operand, text) == "+" => {
-            let left = operand.child_by_field_name("left");
-            let right = operand.child_by_field_name("right");
-            [left, right].iter().flatten().any(|o| is_string(o, text))
-        }
+fn is_string(operand: &Tree) -> bool {
+    match &operand.kind {
+        K::Literal(LitKind::String) => true,
+        K::Parens(inner) => is_string(inner),
+        K::Binary { op, lhs, rhs } if op == "+" => is_string(lhs) || is_string(rhs),
         _ => false,
     }
 }

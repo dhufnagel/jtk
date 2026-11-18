@@ -3,22 +3,23 @@
 //! A block with only `;` counts as empty. A comment in the block, or naming the exception like PMD's defaults
 //! (`ignored`, `expected`) or `_`, documents that the exception is swallowed on purpose.
 
-use tree_sitter::Node;
-
-use crate::lint::{Diagnostic, Rule, source};
+use crate::ast::{K, Tree};
+use crate::lint::tree::{Context, has_comment};
+use crate::lint::{Diagnostic, Rule};
 
 const INTENTIONAL_NAMES: &[&str] = &["ignored", "expected", "_"];
 
-pub fn check(catch: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(body) = catch.child_by_field_name("body") else { return };
-    if body.named_child_count() > 0 || is_intentional(catch, text) {
-        return;
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Try { catches, .. } = &tree.kind else { return };
+    for catch in catches {
+        let block = &catch.block;
+        let K::Block { stmts, .. } = &block.kind else { continue };
+        if stmts.iter().any(|s| !matches!(s.kind, K::Empty))
+            || has_comment(context.text, block.start..block.end)
+            || INTENTIONAL_NAMES.contains(&catch.param.name.as_str())
+        {
+            continue;
+        }
+        diagnostics.push(Diagnostic::new(Rule::EmptyCatch, block.start, "Empty catch block"));
     }
-    diagnostics.push(Diagnostic::new(Rule::EmptyCatch, body.start_byte(), "Empty catch block"));
-}
-
-fn is_intentional(catch: &Node, text: &str) -> bool {
-    let parameter = catch.named_children(&mut catch.walk()).find(|c| c.kind() == "catch_formal_parameter");
-    let name = parameter.and_then(|p| p.child_by_field_name("name"));
-    name.is_some_and(|n| INTENTIONAL_NAMES.contains(&source(&n, text)))
 }

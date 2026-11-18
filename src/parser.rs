@@ -248,6 +248,11 @@ impl<'s> Parser<'s> {
         if is_ident(self.peek()) { Ok(self.bump()?.to_string()) } else { self.fail() }
     }
 
+    /// The start of the last consumed token.
+    fn prev_start(&self) -> usize {
+        self.toks[self.pos - 1].0
+    }
+
     fn tree(&self, start: usize, kind: K) -> Tree {
         Tree::new(start, self.prev_end, kind)
     }
@@ -948,6 +953,7 @@ impl<'s> Parser<'s> {
             annotations.push(self.annotation()?);
         }
         let ty = self.unannotated_type()?;
+        let name_pos = self.cur_start();
         let mut parts = Vec::new();
         while self.peek() != "this" {
             parts.push(self.ident()?);
@@ -963,6 +969,7 @@ impl<'s> Parser<'s> {
             name: parts.join("."),
             init: None,
             is_record_component: false,
+            name_pos,
         })
     }
 
@@ -980,12 +987,13 @@ impl<'s> Parser<'s> {
             ty = Tree::new(ty.start, name_start, K::ArrayType { elem: Box::new(ty), dims: vec![annotations] });
         }
         let name = if self.peek() == "this" { self.bump()?.to_string() } else { self.ident()? };
+        let name_pos = self.prev_start();
         let name_end = self.prev_end;
         if let Some(groups) = self.dims()? {
             ty = self.add_dims(ty, groups);
         }
         let end = self.prev_end.max(name_end);
-        Ok(VarDecl { start, end, mods, ty: Some(Box::new(ty)), name, init: None, is_record_component: false })
+        Ok(VarDecl { start, end, mods, ty: Some(Box::new(ty)), name, init: None, is_record_component: false, name_pos })
     }
 
     /// Variable declarators after the type, up to (not including) the `;`. `ty` is `None` for `var`.
@@ -997,6 +1005,7 @@ impl<'s> Parser<'s> {
         let mut vars = Vec::new();
         loop {
             let name = self.ident()?;
+            let name_pos = self.prev_start();
             let mut ty = base.clone();
             if let Some(groups) = self.dims()? {
                 ty = ty.map(|t| self.add_dims(t, groups));
@@ -1010,6 +1019,7 @@ impl<'s> Parser<'s> {
                 name,
                 init,
                 is_record_component: false,
+                name_pos,
             });
             if !self.eat(",") {
                 return Ok(vars);
@@ -1342,6 +1352,7 @@ impl<'s> Parser<'s> {
             let var_start = mods.start;
             let ty = self.ty()?;
             let name = self.ident()?;
+            let name_pos = self.prev_start();
             let name_end = self.prev_end;
             let mut ty = if matches!(&ty.kind, K::Ident(n) if n == "var") { None } else { Some(ty) };
             if let Some(groups) = self.dims()? {
@@ -1356,6 +1367,7 @@ impl<'s> Parser<'s> {
                 name,
                 init: None,
                 is_record_component: false,
+                name_pos,
             };
             let expr = Box::new(self.expr()?);
             self.expect(")")?;
@@ -1436,6 +1448,7 @@ impl<'s> Parser<'s> {
                 alternatives.push(self.ty()?);
             }
             let name = self.ident()?;
+            let name_pos = self.prev_start();
             let param_end = self.prev_end;
             self.expect(")")?;
             let ty = if alternatives.len() == 1 {
@@ -1452,6 +1465,7 @@ impl<'s> Parser<'s> {
                 name,
                 init: None,
                 is_record_component: false,
+                name_pos,
             };
             let union = if alternatives.len() > 1 { alternatives } else { vec![] };
             catches.push(Catch { start: catch_start, param, union, block: Box::new(self.block()?) });
@@ -1472,13 +1486,22 @@ impl<'s> Parser<'s> {
         let ty = self.ty()?;
         let mut ty = if matches!(&ty.kind, K::Ident(n) if n == "var") { None } else { Some(ty) };
         let name = self.ident()?;
+        let name_pos = self.prev_start();
         if let Some(groups) = self.dims()? {
             ty = ty.map(|t| self.add_dims(t, groups));
         }
         self.expect("=")?;
         let init = Some(Box::new(self.expr()?));
-        let var =
-            VarDecl { start, end: self.prev_end, mods, ty: ty.map(Box::new), name, init, is_record_component: false };
+        let var = VarDecl {
+            start,
+            end: self.prev_end,
+            mods,
+            ty: ty.map(Box::new),
+            name,
+            init,
+            is_record_component: false,
+            name_pos,
+        };
         Ok(self.tree(start, K::Var(Box::new(var))))
     }
 
@@ -1627,8 +1650,10 @@ impl<'s> Parser<'s> {
             return Ok(self.tree(start, K::RecordPattern { ty: Box::new(ty), nested }));
         }
         let name = self.ident()?;
+        let name_pos = self.prev_start();
         let ty = if matches!(&ty.kind, K::Ident(n) if n == "var") { None } else { Some(Box::new(ty)) };
-        let var = VarDecl { start, end: self.prev_end, mods, ty, name, init: None, is_record_component: false };
+        let var =
+            VarDecl { start, end: self.prev_end, mods, ty, name, init: None, is_record_component: false, name_pos };
         Ok(self.tree(start, K::BindingPattern { var: Box::new(var) }))
     }
 
@@ -1711,6 +1736,7 @@ impl<'s> Parser<'s> {
         }
         if is_ident(self.peek()) {
             let name = self.ident()?;
+            let name_pos = self.prev_start();
             let var_start = if has_mods { mods.start } else { ty.start };
             let mods = if has_mods { mods } else { Mods { start: ty.start, annotations: vec![] } };
             let var = VarDecl {
@@ -1721,6 +1747,7 @@ impl<'s> Parser<'s> {
                 name,
                 init: None,
                 is_record_component: false,
+                name_pos,
             };
             return Ok(Tree::new(var.start, var.end, K::BindingPattern { var: Box::new(var) }));
         }
@@ -1977,11 +2004,7 @@ impl<'s> Parser<'s> {
     fn creator(&mut self, outer: Option<Tree>) -> P<Tree> {
         let start = outer.as_ref().map_or(self.cur_start(), |o| o.start);
         self.expect("new")?;
-        // Constructor type arguments (`new <T>Foo()`) are not supported by the converter, which reports them.
-        if self.peek() == "<" {
-            return self.fail();
-        }
-        let type_args = vec![];
+        let type_args = if self.peek() == "<" { self.type_args()? } else { vec![] };
         let annotations_start = self.cur_start();
         let mut annotations = Vec::new();
         while self.at_annotation() {
@@ -2059,6 +2082,7 @@ impl<'s> Parser<'s> {
 }
 
 fn inferred_param(start: usize, end: usize, name: String) -> VarDecl {
+    let name_pos = start;
     VarDecl {
         start,
         end,
@@ -2067,6 +2091,7 @@ fn inferred_param(start: usize, end: usize, name: String) -> VarDecl {
         name,
         init: None,
         is_record_component: false,
+        name_pos,
     }
 }
 

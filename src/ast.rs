@@ -51,6 +51,8 @@ pub struct VarDecl {
     pub name: String,
     pub init: Option<B>,
     pub is_record_component: bool,
+    /// The offset of the name.
+    pub name_pos: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1025,12 +1027,14 @@ impl<'s> Converter<'s> {
         let mut annotations = Vec::new();
         let mut ty = None;
         let mut name_parts = Vec::new();
+        let mut name_pos = n.end_byte();
         for c in named_children(n) {
             if is_annotation(&c) && ty.is_none() {
                 annotations.push(self.annotation(&c)?);
             } else if ty.is_none() {
                 ty = Some(Box::new(self.ty(&c)?));
             } else {
+                name_pos = name_pos.min(c.start_byte());
                 name_parts.push(self.text(&c).to_string());
             }
         }
@@ -1040,6 +1044,7 @@ impl<'s> Converter<'s> {
             mods: Mods { start: start_of(n), annotations },
             ty,
             name: name_parts.join("."),
+            name_pos,
             init: None,
             is_record_component: false,
         })
@@ -1073,6 +1078,7 @@ impl<'s> Converter<'s> {
                 mods,
                 ty: Some(Box::new(ty)),
                 name: self.text(&field(&decl, "name")?).into(),
+                name_pos: field(&decl, "name")?.start_byte(),
                 init: None,
                 is_record_component: false,
             });
@@ -1087,6 +1093,7 @@ impl<'s> Converter<'s> {
             mods,
             ty: Some(Box::new(ty)),
             name: self.text(&field(n, "name")?).into(),
+            name_pos: field(n, "name")?.start_byte(),
             init: None,
             is_record_component: false,
         })
@@ -1153,6 +1160,7 @@ impl<'s> Converter<'s> {
                 mods: mods.clone(),
                 ty: ty.map(Box::new),
                 name: self.text(&field(&d, "name")?).into(),
+                name_pos: field(&d, "name")?.start_byte(),
                 init,
                 is_record_component: false,
             });
@@ -1278,6 +1286,7 @@ impl<'s> Converter<'s> {
                     mods,
                     ty: ty.map(Box::new),
                     name: self.text(&name_node).into(),
+                    name_pos: name_node.start_byte(),
                     init: None,
                     is_record_component: false,
                 };
@@ -1356,6 +1365,7 @@ impl<'s> Converter<'s> {
                 mods,
                 ty: ty.map(Box::new),
                 name: self.text(&field(n, "name")?).into(),
+                name_pos: field(n, "name")?.start_byte(),
                 init: match child_by_field(n, "value") {
                     Some(v) => Some(Box::new(self.expr(&v)?)),
                     None => None,
@@ -1383,6 +1393,7 @@ impl<'s> Converter<'s> {
             mods,
             ty: Some(Box::new(ty)),
             name: self.text(&field(&param, "name")?).into(),
+            name_pos: field(&param, "name")?.start_byte(),
             init: None,
             is_record_component: false,
         };
@@ -1477,6 +1488,7 @@ impl<'s> Converter<'s> {
                     mods,
                     ty,
                     name: self.text(name_node).into(),
+                    name_pos: name_node.start_byte(),
                     init: None,
                     is_record_component: false,
                 };
@@ -1507,6 +1519,7 @@ impl<'s> Converter<'s> {
                         mods: Mods { start: start_of(n), annotations: vec![] },
                         ty: None,
                         name: self.text(&ch[0]).into(),
+                        name_pos: ch[0].start_byte(),
                         init: None,
                         is_record_component: false,
                     };
@@ -1519,6 +1532,7 @@ impl<'s> Converter<'s> {
                     mods,
                     ty,
                     name: self.text(&ch[1]).into(),
+                    name_pos: ch[1].start_byte(),
                     init: None,
                     is_record_component: false,
                 };
@@ -1727,6 +1741,7 @@ impl<'s> Converter<'s> {
                                 mods: mods.unwrap_or(Mods { start: ty.start, annotations: vec![] }),
                                 ty: Some(Box::new(ty)),
                                 name: self.text(&name).into(),
+                                name_pos: name.start_byte(),
                                 init: None,
                                 is_record_component: false,
                             };
@@ -1799,7 +1814,9 @@ impl<'s> Converter<'s> {
             }
             "object_creation_expression" => {
                 let outer = named_children(n).into_iter().find(|c| {
-                    c.end_byte() <= field(n, "type").map(|t| t.start_byte()).unwrap_or(0) && !is_annotation(c)
+                    c.end_byte() <= field(n, "type").map(|t| t.start_byte()).unwrap_or(0)
+                        && !is_annotation(c)
+                        && c.kind() != "type_arguments"
                 });
                 let outer = match outer {
                     Some(o) => Some(Box::new(self.expr(&o)?)),
@@ -1957,6 +1974,7 @@ impl<'s> Converter<'s> {
             mods: Mods { start: start_of(n), annotations: vec![] },
             ty: None,
             name: self.text(n).into(),
+            name_pos: n.start_byte(),
             init: None,
             is_record_component: false,
         }
