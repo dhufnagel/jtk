@@ -22,21 +22,23 @@
 
 use std::collections::{HashMap, HashSet};
 
-use tree_sitter::Node;
-
-use super::{imported_name, is_on_demand, is_static};
-use crate::lint::syntax::{for_each_descendant, is_comment, named_children, source};
+use super::{import_name, imported_name};
+use crate::ast::{K, Tree};
+use crate::lint::tree::{Context, is_type_child};
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn check(program: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let file = FileTypes::collect(program, text);
+pub fn check(unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let mut file = FileTypes::default();
+    file.collect(unit, context.text, false);
     for reference in &file.qualified {
         if file.has_other_type(reference) {
             continue;
         }
+        let K::MemberSelect { expr, .. } = &reference.tree.kind else { continue };
+        let last_dot = context.tokens().next(expr.end).map_or(reference.tree.start, |dot| dot.start);
         let message = format!("Unnecessary fully qualified type - {}", reference.name);
-        let diagnostic = Diagnostic::new(Rule::FullyQualifiedType, reference.last_dot, message);
-        diagnostics.push(match file.fix(reference) {
+        let diagnostic = Diagnostic::new(Rule::FullyQualifiedType, last_dot, message);
+        diagnostics.push(match file.fix(reference, context) {
             Some(edit) => diagnostic.with_fix(vec![edit]),
             None => diagnostic,
         });
@@ -45,12 +47,12 @@ pub fn check(program: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
 
 /// A type name qualified by a package, like `java.util.List`.
 struct QualifiedReference<'t> {
-    node: Node<'t>,
+    /// The `MemberSelect` selecting the simple name, without type arguments and leading annotations.
+    tree: &'t Tree,
     /// The name without whitespace, type arguments and annotations.
     name: String,
     package: String,
-    simple_name: String,
-    last_dot: usize,
+    simple_name: &'t str,
 }
 
 /// The type names a file declares, imports and uses.
@@ -60,120 +62,129 @@ struct FileTypes<'t> {
     /// The types imported by single-type imports, by simple name.
     imported: HashMap<String, HashSet<String>>,
     on_demand_packages: Vec<String>,
-    declared: HashSet<String>,
-    type_parameters: HashSet<String>,
+    declared: HashSet<&'t str>,
+    type_parameters: HashSet<&'t str>,
     /// The types used by their simple names, in the places where qualified types are reported.
-    simple: HashSet<String>,
+    simple: HashSet<&'t str>,
     /// The types used qualified by a package, in the same places.
     qualified: Vec<QualifiedReference<'t>>,
     /// The qualified names of `qualified`, by simple name.
-    qualified_names: HashMap<String, HashSet<String>>,
+    qualified_names: HashMap<&'t str, HashSet<String>>,
 }
 
-/// Where type names are neither reported nor count as uses of a simple name.
-const UNCHECKED: &[&str] =
-    &["type_bound", "wildcard", "class_literal", "method_reference", "annotation", "marker_annotation", "permits"];
-
 impl<'t> FileTypes<'t> {
-    fn collect(program: &Node<'t>, text: &str) -> FileTypes<'t> {
-        let mut file = FileTypes::default();
-        // Depth-first in document order, with whether the node is in an unchecked place and whether it is part of a
-        // longer type name.
-        let mut stack = vec![(*program, false, false)];
-        while let Some((node, unchecked, in_name)) = stack.pop() {
-            let kind = node.kind();
-            match kind {
-                "package_declaration" => {
-                    file.package = named_children(&node)
-                        .iter()
-                        .find(|c| matches!(c.kind(), "identifier" | "scoped_identifier"))
-                        .map_or(String::new(), |name| without_whitespace(source(name, text)));
-                    continue;
+    /// Collects the names in `tree`, which is not a type; `unchecked` if it is in a place where type names are
+    /// neither reported nor count as uses.
+    fn collect(&mut self, tree: &'t Tree, text: &str, unchecked: bool) {
+        let mut unchecked = unchecked;
+        let mut permits: &[Tree] = &[];
+        match &tree.kind {
+            K::CompilationUnit { package, imports, types, .. } => {
+                if let Some((_, name)) = package {
+                    self.package = without_whitespace(&text[name.start..name.end]);
                 }
-                "import_declaration" => {
-                    file.add_import(&node, text);
-                    continue;
-                }
-                "class_declaration"
-                | "interface_declaration"
-                | "enum_declaration"
-                | "record_declaration"
-                | "annotation_type_declaration" => {
-                    if let Some(name) = node.child_by_field_name("name") {
-                        file.declared.insert(source(&name, text).to_string());
-                    }
-                }
-                "type_parameter" => {
-                    if let Some(name) = named_children(&node).into_iter().find(|c| c.kind() == "type_identifier") {
-                        file.type_parameters.insert(source(&name, text).to_string());
-                    }
-                    // The name is a declaration, and bounds are unchecked.
-                    continue;
-                }
-                "type_identifier" | "scoped_type_identifier" if !in_name && !unchecked => {
-                    file.add_reference(node, text)
-                }
-                _ => {}
+                imports.iter().for_each(|import| self.add_import(import, text));
+                types.iter().for_each(|t| self.collect(t, text, unchecked));
+                return;
             }
-            let unchecked = unchecked || UNCHECKED.contains(&kind);
-            let children = named_children(&node);
-            for child in children.into_iter().rev() {
-                let child_in_name = match kind {
-                    "scoped_type_identifier" => true,
-                    "generic_type" => in_name && child.kind() != "type_arguments",
-                    _ => false,
-                };
-                stack.push((child, unchecked, child_in_name));
+            K::Class(class) => {
+                self.declared.insert(&class.name);
+                permits = &class.permits;
             }
+            // The name is a declaration, and bounds are unchecked.
+            K::TypeParameter { name, .. } => {
+                self.type_parameters.insert(name);
+                return;
+            }
+            K::Annotation { .. } | K::MemberRef { .. } => unchecked = true,
+            K::MemberSelect { name, .. } if name == "class" => unchecked = true,
+            _ => {}
         }
-        file
+        // The variables of `String a, b[];` each have a copy of the type, which is written once.
+        let mut previous_type_start = None;
+        tree.for_each_child(&mut |child| {
+            // Type parameters and patterns are declarations, which contain types.
+            let is_declaration = matches!(
+                child.kind,
+                K::TypeParameter { .. } | K::BindingPattern { .. } | K::RecordPattern { .. } | K::AnyPattern
+            );
+            if is_type_child(tree, child) && !is_declaration {
+                let is_copy = previous_type_start.replace(child.start) == Some(child.start);
+                if !unchecked && !is_copy && !permits.iter().any(|p| std::ptr::eq(p, child)) {
+                    self.add_type(child);
+                }
+            } else {
+                self.collect(child, text, unchecked);
+            }
+        });
     }
 
-    fn add_import(&mut self, import: &Node, text: &str) {
-        if is_static(import) {
+    /// Adds the type names of a type.
+    fn add_type(&mut self, ty: &'t Tree) {
+        match &ty.kind {
+            K::Ident(_) | K::MemberSelect { .. } | K::Parameterized { .. } => self.add_reference(ty),
+            K::Annotated { base, .. } => self.add_type(base),
+            K::ArrayType { elem, .. } => self.add_type(elem),
+            K::Union(types) | K::Intersection(types) => types.iter().for_each(|t| self.add_type(t)),
+            _ => {}
+        }
+    }
+
+    fn add_import(&mut self, import: &Tree, text: &str) {
+        let Some((_, on_demand)) = import_name(import) else { return };
+        if matches!(import.kind, K::Import { is_static: true, .. }) {
             return;
         }
         let name = imported_name(import, text);
-        if is_on_demand(import) {
+        if on_demand {
             self.on_demand_packages.push(name.trim_end_matches(".*").to_string());
         } else if let Some((_, simple_name)) = name.rsplit_once('.') {
             self.imported.entry(simple_name.to_string()).or_default().insert(name);
         }
     }
 
-    /// Adds a whole type name, which is not part of a longer one.
-    fn add_reference(&mut self, node: Node<'t>, text: &str) {
-        let segments = segment_names(&node, text);
-        let Some((simple_name, qualifier)) = segments.split_last() else { return };
-        let Some(last_qualifier) = qualifier.last() else {
-            self.simple.insert(simple_name.to_string());
-            return;
+    /// Adds a whole class type name with its type arguments, which is not part of a longer one.
+    fn add_reference(&mut self, ty: &'t Tree) {
+        self.add_type_arguments(ty);
+        let name = without_annotations_and_arguments(ty);
+        let (simple_name, qualifier) = match &name.kind {
+            K::Ident(simple_name) => {
+                self.simple.insert(simple_name);
+                return;
+            }
+            K::MemberSelect { expr, name } => (name.as_str(), expr),
+            _ => return,
         };
+        let mut segments = Vec::new();
+        segment_names(qualifier, &mut segments);
         // `Map.Entry` names a member type, as do `outer<T>.Inner` and, by convention, other names whose qualifier
         // does not start with a lowercase letter.
-        let qualifier_node = named_children(&node).into_iter().find(|c| !c.kind().ends_with("annotation"));
-        if !last_qualifier.starts_with(|c: char| c.is_lowercase())
-            || qualifier_node.is_none_or(|q| q.kind() == "generic_type")
-        {
+        let is_package = segments.last().is_some_and(|last| last.starts_with(|c: char| c.is_lowercase()));
+        if !is_package || matches!(without_annotations(qualifier).kind, K::Parameterized { .. }) {
             return;
         }
-        let package = qualifier.join(".");
-        let name = format!("{package}.{simple_name}");
-        let last_dot = node.children(&mut node.walk()).filter(|c| c.kind() == ".").last();
-        self.qualified_names.entry(simple_name.to_string()).or_default().insert(name.clone());
-        self.qualified.push(QualifiedReference {
-            node,
-            name,
-            package,
-            simple_name: simple_name.to_string(),
-            last_dot: last_dot.map_or(node.start_byte(), |d| d.start_byte()),
-        });
+        let package = segments.join(".");
+        let qualified_name = format!("{package}.{simple_name}");
+        self.qualified_names.entry(simple_name).or_default().insert(qualified_name.clone());
+        self.qualified.push(QualifiedReference { tree: name, name: qualified_name, package, simple_name });
+    }
+
+    /// Adds the type arguments anywhere in a class type name, such as the `T` of `Outer<T>.Inner`.
+    fn add_type_arguments(&mut self, ty: &'t Tree) {
+        match &ty.kind {
+            K::Parameterized { base, args } => {
+                self.add_type_arguments(base);
+                args.iter().for_each(|arg| self.add_type(arg));
+            }
+            K::MemberSelect { expr: inner, .. } | K::Annotated { base: inner, .. } => self.add_type_arguments(inner),
+            _ => {}
+        }
     }
 
     /// Whether the file may use another type with the simple name of the reference, so that it has to stay
     /// qualified.
     fn has_other_type(&self, reference: &QualifiedReference) -> bool {
-        let simple_name = reference.simple_name.as_str();
+        let simple_name = reference.simple_name;
         let imported = self.imported.get(simple_name);
         let imports_reference = imported.is_some_and(|names| names.contains(&reference.name));
         // An imported type hides the types of the same name in packages imported on demand.
@@ -190,19 +201,19 @@ impl<'t> FileTypes<'t> {
     }
 
     /// The edit that removes the qualifier, if the simple name refers to the same type.
-    fn fix(&self, reference: &QualifiedReference) -> Option<Edit> {
-        let visible = self.imported.get(&reference.simple_name).is_some_and(|names| names.contains(&reference.name))
+    fn fix(&self, reference: &QualifiedReference, context: &Context) -> Option<Edit> {
+        let visible = self.imported.get(reference.simple_name).is_some_and(|names| names.contains(&reference.name))
             || reference.package == self.package;
-        let simple_name = named_children(&reference.node).into_iter().rfind(|c| c.kind() == "type_identifier")?;
-        let mut only_names = true;
-        for_each_descendant(&reference.node, &[], |n| {
-            only_names &= !is_comment(n) && !n.kind().ends_with("annotation");
-        });
+        let range = reference.tree.start..reference.tree.end;
+        let tokens = context.tokens();
+        let simple_name = tokens.previous(range.end)?;
+        let only_names =
+            !tokens.has_comment(range.clone()) && tokens.in_range(range.clone()).all(|t| &context.text[t] != "@");
         let safe = visible
             && only_names
             && reference.package != "java.lang"
-            && !self.type_parameters.contains(&reference.simple_name);
-        safe.then(|| Edit::new(reference.node.start_byte()..simple_name.start_byte(), ""))
+            && !self.type_parameters.contains(reference.simple_name);
+        safe.then(|| Edit::new(range.start..simple_name.start, ""))
     }
 }
 
@@ -220,14 +231,33 @@ fn on_demand_type(package: &str, simple_name: &str) -> bool {
     }
 }
 
-/// The identifiers of a part of a qualified type name.
-fn segment_names<'a>(node: &Node, text: &'a str) -> Vec<&'a str> {
-    match node.kind() {
-        "type_identifier" => vec![source(node, text)],
-        "scoped_type_identifier" | "generic_type" => {
-            named_children(node).iter().flat_map(|c| segment_names(c, text)).collect()
+/// The type name without the type arguments of its last part and the annotations around it.
+fn without_annotations_and_arguments(mut ty: &Tree) -> &Tree {
+    loop {
+        match &ty.kind {
+            K::Parameterized { base, .. } | K::Annotated { base, .. } => ty = base,
+            _ => return ty,
         }
-        _ => Vec::new(),
+    }
+}
+
+fn without_annotations(mut ty: &Tree) -> &Tree {
+    while let K::Annotated { base, .. } = &ty.kind {
+        ty = base;
+    }
+    ty
+}
+
+/// Appends the identifiers of a part of a class type name.
+fn segment_names<'t>(ty: &'t Tree, segments: &mut Vec<&'t str>) {
+    match &ty.kind {
+        K::Ident(name) => segments.push(name),
+        K::MemberSelect { expr, name } => {
+            segment_names(expr, segments);
+            segments.push(name);
+        }
+        K::Parameterized { base, .. } | K::Annotated { base, .. } => segment_names(base, segments),
+        _ => {}
     }
 }
 

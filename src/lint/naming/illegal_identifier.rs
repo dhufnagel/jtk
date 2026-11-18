@@ -2,42 +2,39 @@
 //! `^(?!var$|\S*\$)\S+$`). Checks the names of types, methods, annotation elements, enum constants, fields,
 //! variables, parameters (also of lambdas), record components and pattern variables.
 
-use tree_sitter::Node;
-
-use super::super::syntax::{named_children, source};
-use super::super::{Diagnostic, Rule};
-use super::parameter_name_node;
+use crate::ast::{K, Tree};
+use crate::lint::tree::Context;
+use crate::lint::{Diagnostic, Rule};
 
 const PATTERN: &str = r"^(?!var$|\S*\$)\S+$";
 
-pub fn check(node: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    for name in names(node) {
-        let value = source(&name, text);
-        if value == "var" || value.contains('$') {
-            let message = format!("Name '{value}' must match pattern '{PATTERN}'");
-            diagnostics.push(Diagnostic::new(Rule::IllegalIdentifier, name.start_byte(), message));
+pub fn check(tree: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    for_each_name(tree, |name, offset| {
+        if name == "var" || name.contains('$') {
+            let message = format!("Name '{name}' must match pattern '{PATTERN}'");
+            diagnostics.push(Diagnostic::new(Rule::IllegalIdentifier, offset, message));
         }
-    }
+    });
 }
 
-/// The names a node declares.
-fn names<'t>(node: &Node<'t>) -> Vec<Node<'t>> {
-    match node.kind() {
-        "field_declaration" | "local_variable_declaration" | "constant_declaration" => named_children(node)
-            .into_iter()
-            .filter(|d| d.kind() == "variable_declarator")
-            .filter_map(|d| d.child_by_field_name("name"))
-            .collect(),
-        "formal_parameter" | "spread_parameter" | "catch_formal_parameter" => {
-            parameter_name_node(node).into_iter().collect()
+/// Calls `f` with each checked name the tree declares and its offset.
+fn for_each_name(tree: &Tree, mut f: impl FnMut(&str, usize)) {
+    match &tree.kind {
+        K::Class(class) => {
+            f(&class.name, class.name_pos);
+            class.enum_constants.iter().for_each(|c| f(&c.name, c.name_pos));
+            class.record_components.iter().for_each(|c| f(&c.name, c.name_pos));
         }
-        "inferred_parameters" => named_children(node).into_iter().filter(|c| c.kind() == "identifier").collect(),
-        "lambda_expression" => {
-            node.child_by_field_name("parameters").filter(|p| p.kind() == "identifier").into_iter().collect()
+        K::Method(method) => {
+            // Constructors are named after their class.
+            if method.ret.is_some() {
+                f(&method.name, method.name_pos);
+            }
+            method.params.iter().for_each(|p| f(&p.name, p.name_pos));
         }
-        "type_pattern" | "record_pattern_component" => {
-            named_children(node).into_iter().last().filter(|n| n.kind() == "identifier").into_iter().collect()
-        }
-        _ => node.child_by_field_name("name").filter(|n| n.kind() == "identifier").into_iter().collect(),
+        K::Vars(vars) | K::Lambda { params: vars, .. } => vars.iter().for_each(|v| f(&v.name, v.name_pos)),
+        K::ForEach { var, .. } | K::BindingPattern { var } => f(&var.name, var.name_pos),
+        K::Try { catches, .. } => catches.iter().for_each(|c| f(&c.param.name, c.param.name_pos)),
+        _ => {}
     }
 }

@@ -5,55 +5,53 @@ mod illegal_import;
 mod star_import;
 mod static_import;
 
-use tree_sitter::Node;
-
-use super::syntax::source;
+use super::tree::{Context, TreeCheck};
 use super::{Check, ConfiguredCheck, Rule};
+use crate::ast::{K, Tag, Tree};
 
 /// The checks on the AST, with the kinds of trees each checks.
-pub(super) const TREE_CHECKS: &[(Rule, &[crate::ast::Tag], super::tree::TreeCheck)] = &[];
-
-pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
-    (Rule::StarImport, &["import_declaration"], star_import::check),
-    (Rule::StaticImport, &["import_declaration"], static_import::check),
-    (Rule::FullyQualifiedType, &["program"], fully_qualified_type::check),
+pub(super) const TREE_CHECKS: &[(Rule, &[Tag], TreeCheck)] = &[
+    (Rule::StarImport, &[Tag::Import], star_import::check),
+    (Rule::StaticImport, &[Tag::Import], static_import::check),
+    (Rule::IllegalImport, &[Tag::Import], illegal_import::check),
+    (Rule::FullyQualifiedType, &[Tag::CompilationUnit], fully_qualified_type::check),
 ];
 
+pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[];
+
 /// The checks of rules with parameters.
-pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] =
-    &[(Rule::IllegalImport, &["import_declaration"], illegal_import::check)];
+pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[];
+
+/// The name an import imports, and whether the import is on demand: the name of `import a.b.*;` is `a.b`.
+fn import_name(import: &Tree) -> Option<(&Tree, bool)> {
+    let K::Import { name, .. } = &import.kind else { return None };
+    match &name.kind {
+        K::MemberSelect { expr, name } if name == "*" => Some((expr, true)),
+        _ => Some((name, false)),
+    }
+}
+
+fn is_on_demand(import: &Tree) -> bool {
+    import_name(import).is_some_and(|(_, on_demand)| on_demand)
+}
 
 /// The imported name as Checkstyle spells it: without whitespace, ending in `.*` for an on-demand import.
-fn imported_name(import: &Node, text: &str) -> String {
-    let mut name = String::new();
-    for child in import.children(&mut import.walk()) {
-        match child.kind() {
-            "identifier" | "scoped_identifier" => name.extend(source(&child, text).split_whitespace()),
-            "asterisk" => name.push_str(".*"),
-            _ => {}
-        }
+fn imported_name(import: &Tree, text: &str) -> String {
+    let Some((name, on_demand)) = import_name(import) else { return String::new() };
+    let mut imported: String = text[name.start..name.end].split_whitespace().collect();
+    if on_demand {
+        imported.push_str(".*");
     }
-    name
-}
-
-fn is_static(import: &Node) -> bool {
-    import.children(&mut import.walk()).any(|c| c.kind() == "static")
-}
-
-fn is_on_demand(import: &Node) -> bool {
-    import.children(&mut import.walk()).any(|c| c.kind() == "asterisk")
+    imported
 }
 
 /// The offset of the last `.` of the imported name, where Checkstyle reports violations about the name.
-fn last_dot(import: &Node) -> usize {
-    let dot = if is_on_demand(import) {
-        last_dot_child(import)
-    } else {
-        import.children(&mut import.walk()).find(|c| c.kind() == "scoped_identifier").and_then(|n| last_dot_child(&n))
-    };
-    dot.map_or(import.start_byte(), |d| d.start_byte())
-}
-
-fn last_dot_child<'t>(node: &Node<'t>) -> Option<Node<'t>> {
-    node.children(&mut node.walk()).filter(|c| c.kind() == ".").last()
+fn last_dot(import: &Tree, context: &Context) -> usize {
+    match &import.kind {
+        K::Import { name, .. } => match &name.kind {
+            K::MemberSelect { expr, .. } => context.tokens().next(expr.end).map_or(import.start, |dot| dot.start),
+            _ => import.start,
+        },
+        _ => import.start,
+    }
 }

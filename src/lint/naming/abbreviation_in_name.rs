@@ -5,57 +5,66 @@
 //! pattern variables are checked; `static` and `final` fields and variables, interface fields and `@Override`
 //! methods are not.
 
-use tree_sitter::Node;
+use super::{is_annotation_element, is_field, is_interface_member, is_static_or_final};
+use crate::ast::{K, Mods, Tree, VarDecl};
+use crate::lint::tree::Context;
+use crate::lint::{Diagnostic, Rule};
 
-use super::super::syntax::{has_modifier, modifiers, named_children, source};
-use super::super::{Diagnostic, Rule, RuleOptions};
-use super::parameter_name_node;
-
-pub fn check(node: &Node, text: &str, options: &RuleOptions, diagnostics: &mut Vec<Diagnostic>) {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     // An abbreviation and the capital starting the next word.
-    let allowed_capitals = options.abbreviation_in_name.allowed_abbreviation_length as usize + 1;
-    for name in names(node, text) {
-        let value = source(&name, text);
-        if has_long_abbreviation(value, allowed_capitals) {
+    let allowed_capitals = context.options.abbreviation_in_name.allowed_abbreviation_length as usize + 1;
+    for_each_name(tree, context, |name, offset| {
+        if has_long_abbreviation(name, allowed_capitals) {
             let message = format!(
-                "Abbreviation in name '{value}' must contain no more than '{allowed_capitals}' consecutive capital letters"
+                "Abbreviation in name '{name}' must contain no more than '{allowed_capitals}' consecutive capital letters"
             );
-            diagnostics.push(Diagnostic::new(Rule::AbbreviationInName, name.start_byte(), message));
+            diagnostics.push(Diagnostic::new(Rule::AbbreviationInName, offset, message));
         }
-    }
+    });
 }
 
-/// The checked names a node declares.
-fn names<'t>(node: &Node<'t>, text: &str) -> Vec<Node<'t>> {
-    let declarators = |declaration: &Node<'t>| -> Vec<Node<'t>> {
-        named_children(declaration)
-            .into_iter()
-            .filter(|d| d.kind() == "variable_declarator")
-            .filter_map(|d| d.child_by_field_name("name"))
-            .collect()
+/// Calls `f` with each checked name the tree declares and its offset.
+fn for_each_name(tree: &Tree, context: &Context, mut f: impl FnMut(&str, usize)) {
+    // A receiver parameter `@A T this` is parsed as a parameter named `this`.
+    let parameters = |params: &[VarDecl], f: &mut dyn FnMut(&str, usize)| {
+        params.iter().filter(|p| p.name != "this").for_each(|p| f(&p.name, p.name_pos));
     };
-    let ignored_modifiers = has_modifier(node, text, "static") || has_modifier(node, text, "final");
-    match node.kind() {
-        "method_declaration" if is_override(node, text) => Vec::new(),
-        "field_declaration" | "local_variable_declaration" if !ignored_modifiers => declarators(node),
-        "enhanced_for_statement" if !ignored_modifiers => node.child_by_field_name("name").into_iter().collect(),
-        "field_declaration" | "local_variable_declaration" | "enhanced_for_statement" => Vec::new(),
-        "formal_parameter" | "spread_parameter" | "catch_formal_parameter" => {
-            parameter_name_node(node).filter(|n| source(n, text) != "this").into_iter().collect()
+    match &tree.kind {
+        K::Class(class) => {
+            f(&class.name, class.name_pos);
+            parameters(&class.record_components, &mut f);
         }
-        "inferred_parameters" => named_children(node).into_iter().filter(|c| c.kind() == "identifier").collect(),
-        "type_pattern" | "record_pattern_component" => {
-            named_children(node).into_iter().last().filter(|n| n.kind() == "identifier").into_iter().collect()
+        K::Method(method) => {
+            // Constructors are named after their class.
+            if method.ret.is_some() && (is_annotation_element(context) || !is_override(&method.mods, context)) {
+                f(&method.name, method.name_pos);
+            }
+            parameters(&method.params, &mut f);
         }
-        _ => node.child_by_field_name("name").filter(|n| n.kind() == "identifier").into_iter().collect(),
+        K::Vars(vars) => {
+            let is_constant = is_field(context) && is_interface_member(context);
+            if !is_constant && !vars.first().is_some_and(|v| is_static_or_final(&v.mods, context)) {
+                vars.iter().for_each(|v| f(&v.name, v.name_pos));
+            }
+        }
+        K::ForEach { var, .. } => {
+            if !is_static_or_final(&var.mods, context) {
+                f(&var.name, var.name_pos);
+            }
+        }
+        // Checkstyle skips the parameter of a lambda without parentheses (`x -> ...`).
+        K::Lambda { params, .. } if context.text[tree.start..].starts_with('(') => parameters(params, &mut f),
+        K::Try { catches, .. } => {
+            catches.iter().filter(|c| c.param.name != "this").for_each(|c| f(&c.param.name, c.param.name_pos));
+        }
+        K::BindingPattern { var } => f(&var.name, var.name_pos),
+        _ => {}
     }
 }
 
 /// Checkstyle only recognizes `@Override` by its simple name.
-fn is_override(method: &Node, text: &str) -> bool {
-    modifiers(method).is_some_and(|m| {
-        named_children(&m).iter().any(|a| a.child_by_field_name("name").is_some_and(|n| source(&n, text) == "Override"))
-    })
+fn is_override(mods: &Mods, context: &Context) -> bool {
+    mods.annotations.iter().any(|a| matches!(&a.kind, K::Annotation { ty, .. } if context.source(ty) == "Override"))
 }
 
 /// Whether the name has a run of more than `allowed_capitals` capitals, followed

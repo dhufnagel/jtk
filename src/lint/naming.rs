@@ -21,10 +21,9 @@
 mod abbreviation_in_name;
 mod illegal_identifier;
 
-use tree_sitter::Node;
-
-use super::syntax::{has_modifier, modifiers, named_children, source};
+use super::tree::{Context, TreeCheck, modifier_keywords};
 use super::{Check, ConfiguredCheck, Diagnostic, Rule};
+use crate::ast::{ClassKind, K, Mods, Tag, Tree, VarDecl};
 
 /// The formats, as Checkstyle's regular expressions spell them.
 #[derive(Clone, Copy)]
@@ -93,250 +92,207 @@ impl Format {
     }
 }
 
-fn report(rule: Rule, name: Option<Node>, format: Format, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(name) = name else { return };
-    let value = source(&name, text);
-    if !format.matches(value) {
-        let message = format!("Name '{value}' must match pattern '{}'", format.pattern());
-        diagnostics.push(Diagnostic::new(rule, name.start_byte(), message));
+fn report(rule: Rule, name: &str, offset: usize, format: Format, diagnostics: &mut Vec<Diagnostic>) {
+    if !format.matches(name) {
+        let message = format!("Name '{name}' must match pattern '{}'", format.pattern());
+        diagnostics.push(Diagnostic::new(rule, offset, message));
     }
 }
 
-/// The name of a parameter, also of a varargs one (`String... values`).
-fn parameter_name_node<'t>(parameter: &Node<'t>) -> Option<Node<'t>> {
-    match parameter.kind() {
-        "spread_parameter" => named_children(parameter)
-            .into_iter()
-            .find(|c| c.kind() == "variable_declarator")
-            .and_then(|d| d.child_by_field_name("name")),
-        _ => parameter.child_by_field_name("name"),
+fn report_variable(rule: Rule, variable: &VarDecl, format: Format, diagnostics: &mut Vec<Diagnostic>) {
+    report(rule, &variable.name, variable.name_pos, format, diagnostics);
+}
+
+/// Whether a variable declaration (`K::Vars`) declares fields: its parent is a class body.
+fn is_field(context: &Context) -> bool {
+    matches!(context.parent().map(|p| &p.kind), Some(K::Class(_) | K::NewClass { .. }))
+}
+
+/// Whether the parent is the body of an interface or annotation type, whose fields are constants.
+fn is_interface_member(context: &Context) -> bool {
+    matches!(context.parent().map(|p| &p.kind),
+        Some(K::Class(c)) if matches!(c.kind, ClassKind::Interface | ClassKind::Annotation))
+}
+
+/// Whether a method is an element of an annotation type, not a method.
+fn is_annotation_element(context: &Context) -> bool {
+    matches!(context.parent().map(|p| &p.kind), Some(K::Class(c)) if c.kind == ClassKind::Annotation)
+}
+
+/// Whether the declaration has a `static` or a `final` modifier.
+fn is_static_or_final(mods: &Mods, context: &Context) -> bool {
+    modifier_keywords(mods, context.text, context.tokens()).iter().any(|(k, _)| matches!(*k, "static" | "final"))
+}
+
+/// The rule for the names of fields: constants (`static final` or in an interface or annotation type), static or
+/// instance fields.
+fn field_rule(vars: &[VarDecl], context: &Context) -> Rule {
+    if is_interface_member(context) {
+        return Rule::ConstantName;
     }
-}
-
-fn declarator_names<'t>(declaration: &Node<'t>) -> Vec<Node<'t>> {
-    named_children(declaration)
-        .into_iter()
-        .filter(|d| d.kind() == "variable_declarator")
-        .filter_map(|d| d.child_by_field_name("name"))
-        .collect()
-}
-
-pub fn type_name(declaration: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    report(Rule::TypeName, declaration.child_by_field_name("name"), Format::UpperCamel, text, diagnostics);
-}
-
-/// Overriding methods are skipped: their name is not theirs to choose.
-pub fn method_name(method: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let is_override = modifiers(method).is_some_and(|m| {
-        named_children(&m)
-            .iter()
-            .any(|a| a.child_by_field_name("name").is_some_and(|n| source(&n, text).ends_with("Override")))
-    });
-    if !is_override {
-        report(Rule::MethodName, method.child_by_field_name("name"), Format::LowerCamel, text, diagnostics);
-    }
-}
-
-/// The kind of a field: instance, constant (`static final` or in an interface) or static.
-fn field_rule(field: &Node, text: &str) -> Rule {
-    let is_static = has_modifier(field, text, "static");
-    let is_final = has_modifier(field, text, "final");
-    match (field.kind(), is_static, is_final) {
-        ("constant_declaration", _, _) | (_, true, true) => Rule::ConstantName,
-        (_, true, false) => Rule::StaticVariableName,
+    let Some(first) = vars.first() else { return Rule::MemberName };
+    let keywords = modifier_keywords(&first.mods, context.text, context.tokens());
+    let has = |keyword: &str| keywords.iter().any(|(k, _)| *k == keyword);
+    match (has("static"), has("final")) {
+        (true, true) => Rule::ConstantName,
+        (true, false) => Rule::StaticVariableName,
         _ => Rule::MemberName,
     }
 }
 
-pub fn member_name(field: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if field_rule(field, text) == Rule::MemberName {
-        for name in declarator_names(field) {
-            report(Rule::MemberName, Some(name), Format::LowerCamel, text, diagnostics);
+pub fn type_name(tree: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if let K::Class(class) = &tree.kind {
+        report(Rule::TypeName, &class.name, class.name_pos, Format::UpperCamel, diagnostics);
+    }
+}
+
+/// Overriding methods are skipped: their name is not theirs to choose.
+pub fn method_name(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Method(method) = &tree.kind else { return };
+    if method.ret.is_none() || is_annotation_element(context) {
+        return;
+    }
+    let is_override = method.mods.annotations.iter().any(|a| match &a.kind {
+        K::Annotation { ty, .. } => context.source(ty).ends_with("Override"),
+        _ => false,
+    });
+    if !is_override {
+        report(Rule::MethodName, &method.name, method.name_pos, Format::LowerCamel, diagnostics);
+    }
+}
+
+/// The fields of a declaration if their names are checked by `rule`.
+fn fields_of<'t>(tree: &'t Tree, context: &Context, rule: Rule) -> &'t [VarDecl] {
+    match &tree.kind {
+        K::Vars(vars) if is_field(context) && field_rule(vars, context) == rule => vars,
+        _ => &[],
+    }
+}
+
+pub fn member_name(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    for field in fields_of(tree, context, Rule::MemberName) {
+        report_variable(Rule::MemberName, field, Format::LowerCamel, diagnostics);
+    }
+}
+
+pub fn constant_name(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let fields = fields_of(tree, context, Rule::ConstantName);
+    for field in fields.iter().filter(|f| !matches!(f.name.as_str(), "serialVersionUID" | "serialPersistentFields")) {
+        report_variable(Rule::ConstantName, field, Format::Constant, diagnostics);
+    }
+}
+
+pub fn static_variable_name(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    for field in fields_of(tree, context, Rule::StaticVariableName) {
+        report_variable(Rule::StaticVariableName, field, Format::LowerCamel, diagnostics);
+    }
+}
+
+/// Local variables, also of enhanced `for` statements and resources.
+pub fn local_variable_name(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let mut report_local =
+        |v: &VarDecl| report_variable(Rule::LocalVariableName, v, Format::LowerCamelOrUnnamed, diagnostics);
+    match &tree.kind {
+        K::Vars(vars) if !is_field(context) => vars.iter().for_each(report_local),
+        K::ForEach { var, .. } => report_local(var),
+        K::Try { resources, .. } => {
+            for resource in resources {
+                if let K::Var(var) = &resource.kind {
+                    report_local(var);
+                }
+            }
         }
+        _ => {}
     }
 }
 
-pub fn constant_name(field: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if field_rule(field, text) == Rule::ConstantName {
-        let names = declarator_names(field)
-            .into_iter()
-            .filter(|n| !matches!(source(n, text), "serialVersionUID" | "serialPersistentFields"));
-        for name in names {
-            report(Rule::ConstantName, Some(name), Format::Constant, text, diagnostics);
-        }
-    }
-}
-
-pub fn static_variable_name(field: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if field_rule(field, text) == Rule::StaticVariableName {
-        for name in declarator_names(field) {
-            report(Rule::StaticVariableName, Some(name), Format::LowerCamel, text, diagnostics);
-        }
-    }
-}
-
-pub fn local_variable_name(node: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let names = match node.kind() {
-        "local_variable_declaration" => declarator_names(node),
-        _ => node.child_by_field_name("name").into_iter().collect(),
-    };
-    for name in names {
-        report(Rule::LocalVariableName, Some(name), Format::LowerCamelOrUnnamed, text, diagnostics);
-    }
-}
-
-pub fn parameter_name(parameter: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let owner = parameter.parent().and_then(|parameters| parameters.parent());
-    let name = parameter_name_node(parameter);
-    let format = match owner.map(|o| o.kind()) {
-        Some("lambda_expression") => Format::LowerCamelOrUnnamed,
-        Some("method_declaration" | "constructor_declaration") => Format::LowerCamel,
+/// Parameters of methods, constructors and lambdas.
+pub fn parameter_name(tree: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let (params, format) = match &tree.kind {
+        K::Method(method) => (&method.params, Format::LowerCamel),
+        K::Lambda { params, .. } => (params, Format::LowerCamelOrUnnamed),
         _ => return,
     };
-    report(Rule::ParameterName, name, format, text, diagnostics);
-}
-
-/// Lambda parameters without types: `x -> ...` or `(x, y) -> ...`.
-pub fn lambda_parameter_name(lambda: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(parameters) = lambda.child_by_field_name("parameters") else { return };
-    let names = match parameters.kind() {
-        "identifier" => vec![parameters],
-        "inferred_parameters" => named_children(&parameters),
-        _ => return,
-    };
-    for name in names {
-        report(Rule::ParameterName, Some(name), Format::LowerCamelOrUnnamed, text, diagnostics);
+    for param in params {
+        report_variable(Rule::ParameterName, param, format, diagnostics);
     }
 }
 
-pub fn catch_parameter_name(parameter: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    report(Rule::CatchParameterName, parameter.child_by_field_name("name"), Format::Catch, text, diagnostics);
-}
-
-pub fn pattern_variable_name(node: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let name = match node.kind() {
-        "instanceof_expression" => node.child_by_field_name("name"),
-        _ => named_children(node).into_iter().last().filter(|n| n.kind() == "identifier"),
-    };
-    report(Rule::PatternVariableName, name, Format::LowerCamelOrUnnamed, text, diagnostics);
-}
-
-pub fn record_component_name(record: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(components) = record.child_by_field_name("parameters") else { return };
-    for component in named_children(&components) {
-        report(Rule::RecordComponentName, parameter_name_node(&component), Format::LowerCamel, text, diagnostics);
+pub fn catch_parameter_name(tree: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if let K::Try { catches, .. } = &tree.kind {
+        for catch in catches {
+            report_variable(Rule::CatchParameterName, &catch.param, Format::Catch, diagnostics);
+        }
     }
 }
 
-pub fn type_parameter_name(parameter: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let name = named_children(parameter).into_iter().find(|c| matches!(c.kind(), "type_identifier" | "identifier"));
-    report(Rule::TypeParameterName, name, Format::SingleUpper, text, diagnostics);
+pub fn pattern_variable_name(tree: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if let K::BindingPattern { var } = &tree.kind {
+        report_variable(Rule::PatternVariableName, var, Format::LowerCamelOrUnnamed, diagnostics);
+    }
+}
+
+pub fn record_component_name(tree: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if let K::Class(class) = &tree.kind {
+        for component in &class.record_components {
+            report_variable(Rule::RecordComponentName, component, Format::LowerCamel, diagnostics);
+        }
+    }
+}
+
+pub fn type_parameter_name(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::TypeParameter { annotations, name, .. } = &tree.kind else { return };
+    let offset = match annotations.last() {
+        Some(annotation) => context.tokens().next(annotation.end).map_or(tree.start, |t| t.start),
+        None => tree.start,
+    };
+    report(Rule::TypeParameterName, name, offset, Format::SingleUpper, diagnostics);
 }
 
 /// The package name without the whitespace and comments it may be written with.
-pub fn package_name(declaration: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(name) =
-        named_children(declaration).into_iter().find(|c| matches!(c.kind(), "scoped_identifier" | "identifier"))
-    else {
-        return;
-    };
-    let mut segments = Vec::new();
-    super::syntax::for_each_descendant(&name, &[], |n| {
-        if n.kind() == "identifier" {
-            segments.push(source(n, text));
+pub fn package_name(tree: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::CompilationUnit { package: Some((_, name)), .. } = &tree.kind else { return };
+    let mut package = String::new();
+    append_qualified_name(name, &mut package);
+    report(Rule::PackageName, &package, name.start, Format::Package, diagnostics);
+}
+
+/// Appends the identifiers of a qualified name (`MemberSelect`s of an `Ident`), separated by `.`.
+fn append_qualified_name(name: &Tree, out: &mut String) {
+    match &name.kind {
+        K::Ident(identifier) => out.push_str(identifier),
+        K::MemberSelect { expr, name } => {
+            append_qualified_name(expr, out);
+            out.push('.');
+            out.push_str(name);
         }
-    });
-    let package = if segments.is_empty() { source(&name, text).to_string() } else { segments.join(".") };
-    if !Format::Package.matches(&package) {
-        let message = format!("Name '{package}' must match pattern '{}'", Format::Package.pattern());
-        diagnostics.push(Diagnostic::new(Rule::PackageName, name.start_byte(), message));
+        _ => {}
     }
 }
 
 /// The checks on the AST, with the kinds of trees each checks.
-pub(super) const TREE_CHECKS: &[(Rule, &[crate::ast::Tag], super::tree::TreeCheck)] = &[];
-
-pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
-    (
-        Rule::TypeName,
-        &[
-            "class_declaration",
-            "interface_declaration",
-            "enum_declaration",
-            "annotation_type_declaration",
-            "record_declaration",
-        ],
-        type_name,
-    ),
-    (Rule::MethodName, &["method_declaration"], method_name),
-    (Rule::MemberName, &["field_declaration"], member_name),
-    (Rule::ConstantName, &["field_declaration", "constant_declaration"], constant_name),
-    (Rule::StaticVariableName, &["field_declaration"], static_variable_name),
-    (
-        Rule::LocalVariableName,
-        &["local_variable_declaration", "enhanced_for_statement", "resource"],
-        local_variable_name,
-    ),
-    (Rule::ParameterName, &["formal_parameter", "spread_parameter"], parameter_name),
-    (Rule::ParameterName, &["lambda_expression"], lambda_parameter_name),
-    (Rule::CatchParameterName, &["catch_formal_parameter"], catch_parameter_name),
-    (
-        Rule::PatternVariableName,
-        &["instanceof_expression", "type_pattern", "record_pattern_component"],
-        pattern_variable_name,
-    ),
-    (Rule::RecordComponentName, &["record_declaration"], record_component_name),
-    (Rule::TypeParameterName, &["type_parameter"], type_parameter_name),
-    (Rule::PackageName, &["package_declaration"], package_name),
-    (
-        Rule::IllegalIdentifier,
-        &[
-            "class_declaration",
-            "interface_declaration",
-            "enum_declaration",
-            "annotation_type_declaration",
-            "record_declaration",
-            "annotation_type_element_declaration",
-            "method_declaration",
-            "enum_constant",
-            "field_declaration",
-            "constant_declaration",
-            "local_variable_declaration",
-            "enhanced_for_statement",
-            "formal_parameter",
-            "spread_parameter",
-            "catch_formal_parameter",
-            "inferred_parameters",
-            "lambda_expression",
-            "instanceof_expression",
-            "type_pattern",
-            "record_pattern_component",
-        ],
-        illegal_identifier::check,
-    ),
+pub(super) const TREE_CHECKS: &[(Rule, &[Tag], TreeCheck)] = &[
+    (Rule::TypeName, &[Tag::Class], type_name),
+    (Rule::MethodName, &[Tag::Method], method_name),
+    (Rule::MemberName, &[Tag::Vars], member_name),
+    (Rule::ConstantName, &[Tag::Vars], constant_name),
+    (Rule::StaticVariableName, &[Tag::Vars], static_variable_name),
+    (Rule::LocalVariableName, &[Tag::Vars, Tag::ForEach, Tag::Try], local_variable_name),
+    (Rule::ParameterName, &[Tag::Method, Tag::Lambda], parameter_name),
+    (Rule::CatchParameterName, &[Tag::Try], catch_parameter_name),
+    (Rule::PatternVariableName, &[Tag::BindingPattern], pattern_variable_name),
+    (Rule::RecordComponentName, &[Tag::Class], record_component_name),
+    (Rule::TypeParameterName, &[Tag::TypeParameter], type_parameter_name),
+    (Rule::PackageName, &[Tag::CompilationUnit], package_name),
+    (Rule::IllegalIdentifier, DECLARING, illegal_identifier::check),
+    (Rule::AbbreviationInName, DECLARING, abbreviation_in_name::check),
 ];
 
+/// The kinds of trees that declare the names N013 and N014 check.
+const DECLARING: &[Tag] =
+    &[Tag::Class, Tag::Method, Tag::Vars, Tag::ForEach, Tag::Lambda, Tag::Try, Tag::BindingPattern];
+
+pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[];
+
 /// The checks of rules with parameters.
-pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[(
-    Rule::AbbreviationInName,
-    &[
-        "class_declaration",
-        "interface_declaration",
-        "enum_declaration",
-        "annotation_type_declaration",
-        "record_declaration",
-        "annotation_type_element_declaration",
-        "method_declaration",
-        "field_declaration",
-        "local_variable_declaration",
-        "enhanced_for_statement",
-        "formal_parameter",
-        "spread_parameter",
-        "catch_formal_parameter",
-        "inferred_parameters",
-        "instanceof_expression",
-        "type_pattern",
-        "record_pattern_component",
-    ],
-    abbreviation_in_name::check,
-)];
+pub(super) const CONFIGURED_CHECKS: &[(Rule, &[&str], ConfiguredCheck)] = &[];
