@@ -5,66 +5,51 @@
 //! `&&`, `||` and `when`. Code in lambdas counts for the enclosing method, code in methods of local and anonymous
 //! classes only for those.
 
-use tree_sitter::Node;
-
-use super::{Event, Visitor, is_method_like, kinds};
-use crate::lint::syntax::operator;
+use super::is_method_like;
+use crate::ast::{K, Tree};
 use crate::lint::{Diagnostic, Rule};
 
-pub fn visitor<'t, 'a>(text: &'a str, max: u64, diagnostics: &'a mut Vec<Diagnostic>) -> Visitor<'t, 'a> {
-    // The complexity of each enclosing method; the first entry collects the code outside methods.
-    let mut stack: Vec<u64> = vec![1];
-    let kinds = kinds![
-        "method_declaration",
-        "constructor_declaration",
-        "compact_constructor_declaration",
-        "static_initializer",
-        "block",
-        "if_statement",
-        "while_statement",
-        "do_statement",
-        "for_statement",
-        "enhanced_for_statement",
-        "catch_clause",
-        "ternary_expression",
-        "guard",
-        "binary_expression",
-        "case",
-    ];
-    let visit = move |event: Event, node: &Node<'t>, ancestors: &[Node<'t>]| {
-        if is_method_like(node, ancestors.last()) {
-            match event {
-                Event::Enter => stack.push(1),
-                Event::Leave => {
-                    let complexity = stack.pop().unwrap_or(1);
-                    if complexity > max {
-                        let message = format!("Cyclomatic Complexity is {complexity} (max allowed is {max}).");
-                        diagnostics.push(Diagnostic::new(Rule::CyclomaticComplexity, node.start_byte(), message));
-                    }
-                }
-            }
-        } else if event == Event::Enter
-            && is_decision_point(node, text)
-            && let Some(top) = stack.last_mut()
-        {
-            *top += 1;
-        }
-    };
-    (kinds, Box::new(visit))
+pub struct Cyclomatic {
+    max: u64,
+    /// The complexity of each enclosing method; the first entry collects the code outside methods.
+    stack: Vec<u64>,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
-fn is_decision_point(node: &Node, text: &str) -> bool {
-    match node.kind() {
-        "if_statement"
-        | "while_statement"
-        | "do_statement"
-        | "for_statement"
-        | "enhanced_for_statement"
-        | "catch_clause"
-        | "ternary_expression"
-        | "guard" => true,
-        "binary_expression" => matches!(operator(node, text), "&&" | "||"),
-        "case" => !node.is_named(),
-        _ => false,
+impl Cyclomatic {
+    pub fn new(max: u64) -> Cyclomatic {
+        Cyclomatic { max, stack: vec![1], diagnostics: Vec::new() }
+    }
+
+    pub fn enter(&mut self, tree: &Tree, ancestors: &[&Tree]) {
+        if is_method_like(tree, ancestors.last().copied()) {
+            self.stack.push(1);
+        } else if let Some(top) = self.stack.last_mut() {
+            *top += decision_points(tree);
+        }
+    }
+
+    pub fn leave(&mut self, tree: &Tree, ancestors: &[&Tree]) {
+        if is_method_like(tree, ancestors.last().copied()) {
+            let complexity = self.stack.pop().unwrap_or(1);
+            if complexity > self.max {
+                let message = format!("Cyclomatic Complexity is {complexity} (max allowed is {}).", self.max);
+                self.diagnostics.push(Diagnostic::new(Rule::CyclomaticComplexity, tree.start, message));
+            }
+        }
+    }
+}
+
+/// The decision points of the tree itself (with its `catch` clauses and `case` labels).
+fn decision_points(tree: &Tree) -> u64 {
+    match &tree.kind {
+        K::If { .. } | K::While { .. } | K::DoWhile { .. } | K::For { .. } | K::ForEach { .. } => 1,
+        K::Conditional { .. } => 1,
+        K::Binary { op, .. } => u64::from(op == "&&" || op == "||"),
+        K::Try { catches, .. } => catches.len() as u64,
+        K::Switch { cases, .. } | K::SwitchExpr { cases, .. } => {
+            cases.iter().map(|c| u64::from(!c.is_default) + u64::from(c.guard.is_some())).sum()
+        }
+        _ => 0,
     }
 }

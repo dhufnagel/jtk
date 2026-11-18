@@ -10,198 +10,255 @@
 //! The violation is reported where Checkstyle reports it, on the expression's parent in its syntax tree: for an
 //! expression statement that is the opening brace of the enclosing block, for a method argument the first argument.
 
-use tree_sitter::Node;
+use std::ptr;
 
-use super::{Event, Visitor, kinds, token};
-use crate::lint::syntax::{has_modifier, is_comment, operator};
+use super::{is_annotation_type, is_constructor_call, token_after, token_before};
+use crate::ast::{Case, K, Tree};
+use crate::lint::tree::{Context, has_modifier};
 use crate::lint::{Diagnostic, Rule};
 
-pub fn visitor<'t, 'a>(text: &'a str, max: u32, diagnostics: &'a mut Vec<Diagnostic>) -> Visitor<'t, 'a> {
-    // The expressions with counted operators, in the order of their first operator: (expression id, position, count).
-    let mut expressions: Vec<(usize, usize, u32)> = Vec::new();
-    let visit = move |event: Event, node: &Node<'t>, ancestors: &[Node<'t>]| {
-        if node.kind() == "program" {
-            if event == Event::Leave {
-                for &(_, position, count) in expressions.iter().filter(|e| e.2 > max) {
-                    let message = format!("Boolean expression complexity is {count} (max allowed is {max}).");
-                    diagnostics.push(Diagnostic::new(Rule::BooleanExpressionComplexity, position, message));
-                }
-                expressions.clear();
-            }
-            return;
-        }
-        if event != Event::Enter || !is_counted_operator(node, ancestors, text) || !is_checked(ancestors, text) {
-            return;
-        }
-        let Some((id, position)) = enclosing_expression(node, ancestors) else { return };
-        match expressions.iter_mut().find(|e| e.0 == id) {
-            Some(expression) => expression.2 += 1,
-            None => expressions.push((id, position, 1)),
-        }
-    };
-    (kinds!["program", "binary_expression"], Box::new(visit))
+pub struct BooleanExpression {
+    max: u32,
+    /// The expressions with counted operators, in the order of their first operator: (expression address, position,
+    /// count).
+    expressions: Vec<(usize, usize, u32)>,
 }
 
-/// The innermost expression that holds the operator (or is it), as its id and where it is reported.
-fn enclosing_expression(operator: &Node, ancestors: &[Node]) -> Option<(usize, usize)> {
-    if let Some(position) = expression_position(operator, ancestors) {
-        return Some((operator.id(), position));
+impl BooleanExpression {
+    pub fn new(max: u32) -> BooleanExpression {
+        BooleanExpression { max, expressions: Vec::new() }
     }
-    (0..ancestors.len())
-        .rev()
-        .find_map(|i| expression_position(&ancestors[i], &ancestors[..i]).map(|p| (ancestors[i].id(), p)))
+
+    pub fn enter(&mut self, tree: &Tree, ancestors: &[&Tree], context: &Context) {
+        if !is_counted_operator(tree, ancestors) || !is_checked(ancestors, context) {
+            return;
+        }
+        let Some((id, position)) = enclosing_expression(tree, ancestors, context) else { return };
+        match self.expressions.iter_mut().find(|e| e.0 == id) {
+            Some(expression) => expression.2 += 1,
+            None => self.expressions.push((id, position, 1)),
+        }
+    }
+
+    pub fn finish(self) -> Vec<Diagnostic> {
+        let max = self.max;
+        let too_complex = self.expressions.into_iter().filter(|e| e.2 > max);
+        too_complex
+            .map(|(_, position, count)| {
+                let message = format!("Boolean expression complexity is {count} (max allowed is {max}).");
+                Diagnostic::new(Rule::BooleanExpressionComplexity, position, message)
+            })
+            .collect()
+    }
+}
+
+/// The innermost expression that holds the operator (or is it), as its address and where it is reported.
+fn enclosing_expression(operator: &Tree, ancestors: &[&Tree], context: &Context) -> Option<(usize, usize)> {
+    let mut node = operator;
+    for i in (0..ancestors.len()).rev() {
+        if let Some(position) = expression_position(node, &ancestors[..=i], context) {
+            return Some((ptr::from_ref(node) as usize, position));
+        }
+        node = ancestors[i];
+    }
+    None
 }
 
 /// Whether code with these ancestors is checked: it must be in a method or constructor, and the innermost one must
 /// not be an `equals` method (whose body typically chains comparisons of all fields).
-fn is_checked(ancestors: &[Node], text: &str) -> bool {
-    let method = ancestors.iter().rev().find(|a| {
-        matches!(a.kind(), "method_declaration" | "constructor_declaration" | "compact_constructor_declaration")
+fn is_checked(ancestors: &[&Tree], context: &Context) -> bool {
+    let method = (1..ancestors.len()).rev().find_map(|i| match &ancestors[i].kind {
+        K::Method(m) if !is_annotation_type(ancestors[i - 1]) => Some(m),
+        _ => None,
     });
-    method.is_some_and(|m| !is_equals_method(m, text))
+    method.is_some_and(|m| {
+        let is_equals = m.ret.is_some()
+            && m.name == "equals"
+            && m.params.len() == 1
+            && !has_modifier(&m.mods, context.text, context.tokens(), "static");
+        !is_equals
+    })
 }
 
-/// Whether the declaration is an instance method `equals` with one parameter.
-fn is_equals_method(method: &Node, text: &str) -> bool {
-    let is_named_equals = method.child_by_field_name("name").is_some_and(|n| &text[n.byte_range()] == "equals");
-    let parameters = method.child_by_field_name("parameters").map_or(0, |list| {
-        list.named_children(&mut list.walk())
-            .filter(|p| matches!(p.kind(), "formal_parameter" | "spread_parameter"))
-            .count()
-    });
-    method.kind() == "method_declaration" && is_named_equals && parameters == 1 && !has_modifier(method, text, "static")
-}
-
-fn is_counted_operator(node: &Node, ancestors: &[Node], text: &str) -> bool {
-    if node.kind() != "binary_expression" {
-        return false;
-    }
-    match operator(node, text) {
+fn is_counted_operator(tree: &Tree, ancestors: &[&Tree]) -> bool {
+    let K::Binary { op, .. } = &tree.kind else { return false };
+    match op.as_str() {
         "&&" | "||" => true,
         "&" | "|" | "^" => {
             // Checkstyle ignores the outermost operator of a method argument.
-            let parent = ancestors.iter().rev().find(|a| a.kind() != "parenthesized_expression");
-            parent.is_none_or(|p| p.kind() != "argument_list")
+            let mut child = tree;
+            for parent in ancestors.iter().rev() {
+                if !matches!(parent.kind, K::Parens(_)) {
+                    return !is_argument(parent, child);
+                }
+                child = parent;
+            }
+            true
         }
         _ => false,
     }
 }
 
+/// Whether `child` is an argument of a method or constructor call, an object creation or an enum constant.
+fn is_argument(parent: &Tree, child: &Tree) -> bool {
+    let contains = |args: &[Tree]| args.iter().any(|a| ptr::eq(a, child));
+    match &parent.kind {
+        K::MethodInvocation { args, .. } | K::NewClass { args, .. } => contains(args),
+        K::Class(c) => c.enum_constants.iter().any(|e| contains(&e.args)),
+        _ => false,
+    }
+}
+
 /// If the node is an expression that Checkstyle wraps in an EXPR node, where it reports it: on the EXPR's parent.
-fn expression_position(node: &Node, ancestors: &[Node]) -> Option<usize> {
-    let parent = ancestors.last()?;
-    let grandparent = ancestors.len().checked_sub(2).map(|i| ancestors[i]);
-    let field = field_name(parent, node);
-    match parent.kind() {
-        "expression_statement" => {
-            let grandparent = grandparent?;
-            Some(match grandparent.kind() {
-                "switch_block_statement_group" => first_statement_position(&grandparent),
-                "if_statement" if grandparent.child_by_field_name("alternative") == Some(*parent) => {
-                    token(&grandparent, "else").map_or(grandparent.start_byte(), |t| t.start_byte())
-                }
-                "labeled_statement" => token(&grandparent, ":").map_or(grandparent.start_byte(), |t| t.start_byte()),
-                _ => grandparent.start_byte(),
-            })
+/// `ancestors` are the node's, the parent last.
+fn expression_position(node: &Tree, ancestors: &[&Tree], context: &Context) -> Option<usize> {
+    let (parent, rest) = ancestors.split_last()?;
+    let grandparent = rest.last();
+    let is = |t: &Tree| ptr::eq(t, node);
+    match &parent.kind {
+        K::ExprStmt(expression) if !is_constructor_call(expression) => {
+            statement_position(parent, grandparent?, context)
         }
-        "parenthesized_expression" => {
-            let grandparent = grandparent?;
-            matches!(
-                grandparent.kind(),
-                "if_statement" | "while_statement" | "do_statement" | "switch_expression" | "synchronized_statement"
-            )
-            .then(|| grandparent.start_byte())
-        }
-        "return_statement" | "throw_statement" | "yield_statement" | "assert_statement" | "switch_label" | "guard"
-        | "dimensions_expr" => {
-            let is_pattern = matches!(node.kind(), "pattern" | "type_pattern" | "record_pattern" | "guard");
-            (!is_pattern).then(|| parent.start_byte())
-        }
-        "variable_declarator" | "resource" if field == Some("value") => {
-            Some(token(parent, "=").map_or(parent.start_byte(), |t| t.start_byte()))
-        }
-        "argument_list" if node.kind() != "lambda_expression" => {
-            let first = parent.named_children(&mut parent.walk()).find(|c| !is_comment(c))?;
-            Some(root_position(&first))
-        }
-        "array_access" if field == Some("index") => {
-            Some(token(parent, "[").map_or(node.start_byte(), |t| t.start_byte()))
-        }
-        "array_initializer" if node.kind() != "array_initializer" => Some(parent.start_byte()),
-        "for_statement" => match field? {
-            "condition" => Some(root_position(node)),
-            "init" | "update" if node.kind() != "local_variable_declaration" => {
-                let first = parent.children_by_field_name(field?, &mut parent.walk()).next()?;
-                Some(root_position(&first))
+        K::Parens(_) => match &grandparent?.kind {
+            K::If { cond, .. } | K::While { cond, .. } | K::DoWhile { cond, .. } => {
+                ptr::eq(&**cond, *parent).then_some(grandparent?.start)
             }
+            K::Switch { selector, .. } | K::SwitchExpr { selector, .. } => {
+                ptr::eq(&**selector, *parent).then_some(grandparent?.start)
+            }
+            K::Synchronized { lock, .. } => ptr::eq(&**lock, *parent).then_some(grandparent?.start),
             _ => None,
         },
-        "enhanced_for_statement" if field == Some("value") => {
-            parent.named_children(&mut parent.walk()).find(|c| !is_comment(c)).map(|c| c.start_byte())
+        K::Return(_) | K::Throw(_) | K::Yield(_) | K::Assert { .. } => Some(parent.start),
+        K::Switch { cases, .. } | K::SwitchExpr { cases, .. } => case_position(node, cases, context),
+        K::Vars(vars) => vars.iter().any(|v| v.init.as_deref().is_some_and(is)).then(|| equals_sign(node, context)),
+        K::Var(var) => var.init.as_deref().is_some_and(is).then(|| equals_sign(node, context)),
+        K::MethodInvocation { args, .. } | K::NewClass { args, .. } => arguments_position(node, args, context),
+        K::Class(c) => c.enum_constants.iter().find_map(|e| arguments_position(node, &e.args, context)),
+        K::ArrayAccess { index, .. } => is(index).then(|| token_before(context, node.start, node.start)),
+        K::NewArray { elem, dims, dim_annotations, init } => {
+            if let Some(i) = dims.iter().position(is) {
+                let annotation = dim_annotations.get(i).and_then(|a| a.first());
+                return Some(annotation.map_or_else(|| token_before(context, node.start, node.start), |a| a.start));
+            }
+            // The elements of an initializer, but not the nested initializers. An array in an annotation is an element
+            // value, whose elements are not expressions of their own.
+            let init = init.as_deref()?;
+            let is_element = init.iter().any(is)
+                && !matches!(node.kind, K::NewArray { elem: None, .. })
+                && !rest.iter().any(|a| matches!(a.kind, K::Annotation { .. }));
+            // At the `{`.
+            is_element.then(|| match elem {
+                Some(_) => token_before(context, init[0].start, parent.start),
+                None => parent.start,
+            })
         }
-        "lambda_expression" if field == Some("body") && node.kind() != "block" => {
-            Some(token(parent, "->").map_or(parent.start_byte(), |t| t.start_byte()))
+        K::For { cond, update, .. } => {
+            if cond.as_deref().is_some_and(is) {
+                Some(root_position(node, context))
+            } else if update.iter().any(is) {
+                Some(root_position(&update[0], context))
+            } else {
+                None
+            }
         }
-        "element_value_pair" if field == Some("value") => Some(parent.start_byte()),
-        "annotation_argument_list" if node.kind() != "element_value_pair" => grandparent.map(|g| g.start_byte()),
+        K::ForEach { expr, .. } => is(expr).then(|| {
+            // The first token of the variable's declaration, after `for (`.
+            let open = context.tokens().next(parent.start + 1).map_or(parent.start, |t| t.end);
+            token_after(context, open, parent.start)
+        }),
+        K::Lambda { body, .. } => {
+            (is(body) && !matches!(body.kind, K::Block { .. })).then(|| token_before(context, body.start, parent.start))
+        }
+        K::Assign { rhs, .. } if grandparent.is_some_and(|g| matches!(g.kind, K::Annotation { .. })) => {
+            is(rhs).then_some(parent.start)
+        }
+        K::Annotation { args, .. } => {
+            (args.iter().any(is) && !matches!(node.kind, K::Assign { .. })).then_some(parent.start)
+        }
         _ => None,
     }
 }
 
-/// The name of the field of `parent` that holds `child`.
-fn field_name<'t>(parent: &Node<'t>, child: &Node<'t>) -> Option<&'t str> {
-    let mut cursor = parent.walk();
-    if !cursor.goto_first_child() {
-        return None;
-    }
-    loop {
-        if cursor.node() == *child {
-            return cursor.field_name();
+/// Where Checkstyle reports an expression statement: on the statement's parent.
+fn statement_position(statement: &Tree, parent: &Tree, context: &Context) -> Option<usize> {
+    Some(match &parent.kind {
+        K::Switch { cases, .. } | K::SwitchExpr { cases, .. } => {
+            // On the statement list of the `case` group, at its first statement.
+            let case = cases.iter().find(|c| c.stmts.iter().any(|s| ptr::eq(s, statement)))?;
+            let first = &case.stmts[0];
+            match &first.kind {
+                K::ExprStmt(expression) => root_position(expression, context),
+                _ => first.start,
+            }
         }
-        if !cursor.goto_next_sibling() {
-            return None;
+        // `else`.
+        K::If { else_: Some(alternative), .. } if ptr::eq(&**alternative, statement) => {
+            token_before(context, statement.start, parent.start)
         }
-    }
+        // The `:` of the label.
+        K::Labeled { .. } => token_before(context, statement.start, parent.start),
+        // A `for` loop's initialization.
+        K::For { init, .. } if init.iter().any(|i| ptr::eq(i, statement)) => match &init[0].kind {
+            K::ExprStmt(first) => root_position(first, context),
+            _ => return None,
+        },
+        // The `{` after `static`.
+        K::Block { is_static: true, .. } => token_after(context, parent.start + 1, parent.start),
+        _ => parent.start,
+    })
 }
 
-/// The position of Checkstyle's first statement of a `case` group, which is where it reports the group's statement
-/// list.
-fn first_statement_position(group: &Node) -> usize {
-    let first = group.named_children(&mut group.walk()).find(|c| c.kind() != "switch_label" && !is_comment(c));
-    match first {
-        Some(statement) if statement.kind() == "expression_statement" => {
-            statement.named_child(0).map_or(statement.start_byte(), |e| root_position(&e))
+/// Where Checkstyle reports the expression if it is a part of one of the `case`s: a label, a guard or a switch
+/// rule's expression.
+fn case_position(node: &Tree, cases: &[Case], context: &Context) -> Option<usize> {
+    let is = |t: &Tree| ptr::eq(t, node);
+    cases.iter().find_map(|case| {
+        if case.labels.iter().any(is) {
+            let is_pattern = matches!(
+                node.kind,
+                K::BindingPattern { .. } | K::RecordPattern { .. } | K::AnyPattern | K::DefaultCaseLabel
+            );
+            (!is_pattern).then_some(case.start)
+        } else if case.guard.as_deref().is_some_and(is) {
+            // At `when`.
+            Some(token_before(context, node.start, case.start))
+        } else if case.body.as_deref().is_some_and(is) {
+            (!matches!(node.kind, K::Block { .. } | K::Throw(_))).then_some(case.start)
+        } else {
+            None
         }
-        Some(statement) => statement.start_byte(),
-        None => group.start_byte(),
-    }
+    })
+}
+
+/// The position of the `=` before a variable's initializer.
+fn equals_sign(initializer: &Tree, context: &Context) -> usize {
+    token_before(context, initializer.start, initializer.start)
+}
+
+/// If the node is one of the arguments (but not a lambda), the position of the root of the first argument.
+fn arguments_position(node: &Tree, args: &[Tree], context: &Context) -> Option<usize> {
+    let is_argument = args.iter().any(|a| ptr::eq(a, node)) && !matches!(node.kind, K::Lambda { .. });
+    is_argument.then(|| root_position(&args[0], context))
 }
 
 /// The position of the token at the root of Checkstyle's syntax tree of an expression, such as the operator of a
 /// binary expression or the opening parenthesis of a method call.
-fn root_position(expression: &Node) -> usize {
-    let at = |kind: &str| token(expression, kind).map_or(expression.start_byte(), |t| t.start_byte());
-    match expression.kind() {
-        "binary_expression" | "assignment_expression" => {
-            expression.child_by_field_name("operator").map_or(expression.start_byte(), |o| o.start_byte())
+fn root_position(expression: &Tree, context: &Context) -> usize {
+    let after = |tree: &Tree| token_after(context, tree.end, expression.start);
+    match &expression.kind {
+        K::Binary { lhs, .. } | K::Assign { lhs, .. } => after(lhs),
+        K::Conditional { cond, .. } => after(cond),
+        K::MethodInvocation { select, .. } => after(select),
+        K::MemberSelect { expr, .. } | K::ArrayAccess { expr, .. } | K::InstanceOf { expr, .. } => after(expr),
+        K::Unary { postfix: true, expr, .. } => after(expr),
+        K::MemberRef { qual, .. } => after(qual),
+        K::Lambda { body, .. } => token_before(context, body.start, expression.start),
+        // `new`, after `outer.`.
+        K::NewClass { outer: Some(outer), .. } => {
+            let dot = context.tokens().next(outer.end).map_or(outer.end, |t| t.end);
+            token_after(context, dot, expression.start)
         }
-        "ternary_expression" => at("?"),
-        "method_invocation" => {
-            expression.child_by_field_name("arguments").map_or(expression.start_byte(), |a| a.start_byte())
-        }
-        "field_access" | "class_literal" => at("."),
-        "array_access" => at("["),
-        "instanceof_expression" => at("instanceof"),
-        "lambda_expression" => at("->"),
-        "method_reference" => at("::"),
-        "object_creation_expression" => at("new"),
-        "update_expression" => {
-            let first = expression.child(0);
-            match first.filter(|f| f.is_named()) {
-                Some(_) => expression.child(1).map_or(expression.start_byte(), |o| o.start_byte()),
-                None => expression.start_byte(),
-            }
-        }
-        _ => expression.start_byte(),
+        _ => expression.start,
     }
 }

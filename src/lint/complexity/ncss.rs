@@ -8,131 +8,115 @@
 //! `break`, `continue`, `return`, `throw`, `synchronized`, `catch`, `finally` and labeled statements. Each count goes
 //! to the enclosing method, class (not interface or enum), record and the file.
 
-use tree_sitter::Node;
-
-use super::{Event, Visitor, file_position, is_method_like, kinds};
+use super::{file_position, is_annotation_type, is_method_like};
+use crate::ast::{ClassKind, K, Tree};
 use crate::lint::options::JavaNcss;
+use crate::lint::tree::{Context, has_modifier};
 use crate::lint::{Diagnostic, Rule};
 
-pub fn visitor<'t, 'a>(_text: &'a str, limits: JavaNcss, diagnostics: &'a mut Vec<Diagnostic>) -> Visitor<'t, 'a> {
-    // The counts of the enclosing methods, classes and records; the first is the file's.
-    let mut counters: Vec<u32> = vec![0];
-    let kinds = kinds![
-        "method_declaration",
-        "constructor_declaration",
-        "compact_constructor_declaration",
-        "static_initializer",
-        "block",
-        "class_declaration",
-        "record_declaration",
-        "interface_declaration",
-        "package_declaration",
-        "import_declaration",
-        "explicit_constructor_invocation",
-        "if_statement",
-        "while_statement",
-        "do_statement",
-        "for_statement",
-        "enhanced_for_statement",
-        "switch_expression",
-        "break_statement",
-        "continue_statement",
-        "return_statement",
-        "throw_statement",
-        "synchronized_statement",
-        "catch_clause",
-        "finally_clause",
-        "labeled_statement",
-        "local_variable_declaration",
-        "field_declaration",
-        "constant_declaration",
-        "expression_statement",
-        "else",
-        "case",
-        "default",
-        "program",
-    ];
-    let visit = move |event: Event, node: &Node<'t>, ancestors: &[Node<'t>]| {
-        let parent = ancestors.last();
-        if node.kind() == "program" {
-            let count = counters[0];
-            if event == Event::Leave && count > limits.file_maximum {
-                let message = format!("NCSS for this file is {count} (max allowed is {}).", limits.file_maximum);
-                diagnostics.push(Diagnostic::new(Rule::JavaNcss, file_position(node), message));
-            }
-            return;
-        }
-        let is_counter =
-            is_method_like(node, parent) || matches!(node.kind(), "class_declaration" | "record_declaration");
-        match event {
-            Event::Enter => {
-                if is_counter {
-                    counters.push(0);
-                }
-                if is_counted(node, parent) {
-                    for count in &mut counters {
-                        *count += 1;
-                    }
-                }
-            }
-            Event::Leave if is_counter && counters.len() > 1 => {
-                let Some(count) = counters.pop() else { return };
-                let (what, max) = match node.kind() {
-                    "class_declaration" => ("class", limits.class_maximum),
-                    "record_declaration" => ("record", limits.record_maximum),
-                    _ => ("method", limits.method_maximum),
-                };
-                if count > max {
-                    let message = format!("NCSS for this {what} is {count} (max allowed is {max}).");
-                    diagnostics.push(Diagnostic::new(Rule::JavaNcss, node.start_byte(), message));
-                }
-            }
-            Event::Leave => {}
-        }
-    };
-    (kinds, Box::new(visit))
+pub struct Ncss {
+    limits: JavaNcss,
+    /// The counts of the enclosing methods, classes and records; the first is the file's.
+    counters: Vec<u32>,
+    diagnostics: Vec<Diagnostic>,
 }
 
-fn is_counted(node: &Node, parent: Option<&Node>) -> bool {
-    let parent_kind = parent.map_or("", |p| p.kind());
-    if !node.is_named() {
-        return match node.kind() {
-            "else" => parent_kind == "if_statement",
-            "case" => parent_kind == "switch_label",
-            "default" => true,
-            _ => false,
-        };
+impl Ncss {
+    pub fn new(limits: JavaNcss) -> Ncss {
+        Ncss { limits, counters: vec![0], diagnostics: Vec::new() }
     }
-    match node.kind() {
-        "import_declaration" => !node.children(&mut node.walk()).any(|c| c.kind() == "static"),
-        "package_declaration"
-        | "class_declaration"
-        | "interface_declaration"
-        | "record_declaration"
-        | "explicit_constructor_invocation"
-        | "if_statement"
-        | "while_statement"
-        | "do_statement"
-        | "for_statement"
-        | "enhanced_for_statement"
-        | "switch_expression"
-        | "break_statement"
-        | "continue_statement"
-        | "return_statement"
-        | "throw_statement"
-        | "synchronized_statement"
-        | "catch_clause"
-        | "finally_clause"
-        | "labeled_statement" => true,
-        "method_declaration" | "constructor_declaration" | "compact_constructor_declaration" | "static_initializer" => {
-            true
+
+    pub fn enter(&mut self, tree: &Tree, ancestors: &[&Tree], context: &Context) {
+        let parent = ancestors.last().copied();
+        if is_counter(tree, parent) {
+            self.counters.push(0);
         }
-        "block" => is_method_like(node, parent),
-        "local_variable_declaration" => {
-            matches!(parent_kind, "block" | "constructor_body" | "switch_block_statement_group")
+        let count = statements(tree, parent, context);
+        if count > 0 {
+            for counter in &mut self.counters {
+                *counter += count;
+            }
         }
-        "field_declaration" | "constant_declaration" => true,
-        "expression_statement" => parent_kind != "switch_rule",
-        _ => false,
+    }
+
+    pub fn leave(&mut self, tree: &Tree, ancestors: &[&Tree]) {
+        if !is_counter(tree, ancestors.last().copied()) || self.counters.len() <= 1 {
+            return;
+        }
+        let count = self.counters.pop().unwrap_or(0);
+        let (what, max) = match &tree.kind {
+            K::Class(c) if c.kind == ClassKind::Class => ("class", self.limits.class_maximum),
+            K::Class(_) => ("record", self.limits.record_maximum),
+            _ => ("method", self.limits.method_maximum),
+        };
+        if count > max {
+            let message = format!("NCSS for this {what} is {count} (max allowed is {max}).");
+            self.diagnostics.push(Diagnostic::new(Rule::JavaNcss, tree.start, message));
+        }
+    }
+
+    /// The violations, with the file's.
+    pub fn finish(mut self, context: &Context) -> Vec<Diagnostic> {
+        let count = self.counters[0];
+        let max = self.limits.file_maximum;
+        if count > max {
+            let message = format!("NCSS for this file is {count} (max allowed is {max}).");
+            self.diagnostics.push(Diagnostic::new(Rule::JavaNcss, file_position(context), message));
+        }
+        self.diagnostics
+    }
+}
+
+/// Whether the tree has a count of its own: a method, class or record.
+fn is_counter(tree: &Tree, parent: Option<&Tree>) -> bool {
+    match &tree.kind {
+        K::Class(c) => matches!(c.kind, ClassKind::Class | ClassKind::Record),
+        _ => is_method_like(tree, parent),
+    }
+}
+
+/// The number of statements the tree counts as, with its own keywords such as `else` or `case`.
+fn statements(tree: &Tree, parent: Option<&Tree>, context: &Context) -> u32 {
+    // Not the initialization of a `for` loop, nor a variable of a compact source file (which tree-sitter parses as
+    // a local variable outside a block).
+    let is_statement = || match parent.map(|p| &p.kind) {
+        Some(K::For { init, .. }) => !init.iter().any(|i| std::ptr::eq(i, tree)),
+        Some(K::CompilationUnit { .. }) => false,
+        _ => true,
+    };
+    match &tree.kind {
+        K::CompilationUnit { package, .. } => u32::from(package.is_some()),
+        K::Import { is_static, .. } => u32::from(!is_static),
+        K::Class(c) => u32::from(matches!(c.kind, ClassKind::Class | ClassKind::Interface | ClassKind::Record)),
+        // An element of an annotation type counts only its `default` value.
+        K::Method(m) if parent.is_some_and(is_annotation_type) => u32::from(m.default_value.is_some()),
+        K::Method(m) => {
+            // The text is searched first, which is cheaper than lexing the file.
+            let is_default = context.text[tree.start..m.name_pos].contains("default")
+                && has_modifier(&m.mods, context.text, context.tokens(), "default");
+            1 + u32::from(is_default)
+        }
+        K::Block { .. } => u32::from(is_method_like(tree, parent)),
+        K::If { else_, .. } => 1 + u32::from(else_.is_some()),
+        K::Switch { cases, .. } | K::SwitchExpr { cases, .. } => {
+            let labels = cases.iter().map(|c| {
+                let has_default = c.is_default || c.labels.iter().any(|l| matches!(l.kind, K::DefaultCaseLabel));
+                u32::from(!c.is_default) + u32::from(has_default)
+            });
+            1 + labels.sum::<u32>()
+        }
+        K::Try { catches, finally, .. } => catches.len() as u32 + u32::from(finally.is_some()),
+        K::While { .. }
+        | K::DoWhile { .. }
+        | K::For { .. }
+        | K::ForEach { .. }
+        | K::Break(_)
+        | K::Continue(_)
+        | K::Return(_)
+        | K::Throw(_)
+        | K::Synchronized { .. }
+        | K::Labeled { .. } => 1,
+        K::Vars(_) | K::ExprStmt(_) => u32::from(is_statement()),
+        _ => 0,
     }
 }

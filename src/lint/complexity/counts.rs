@@ -6,73 +6,75 @@
 //! - C021: exceptions in a `throws` clause (Checkstyle ThrowsCount), except of private methods and methods annotated
 //!   with `@Override`.
 
-use tree_sitter::Node;
+use super::{file_position, token_before};
+use crate::ast::{ClassKind, K, Tree};
+use crate::lint::tree::{Context, has_modifier};
+use crate::lint::{Diagnostic, Rule};
 
-use super::{file_position, is_type_declaration};
-use crate::lint::syntax::{has_modifier, is_comment, modifiers, source};
-use crate::lint::{Diagnostic, Rule, RuleOptions};
-
-pub fn check_parameters(method: &Node, _text: &str, options: &RuleOptions, diagnostics: &mut Vec<Diagnostic>) {
-    let max = options.parameter_number.max as usize;
-    let count = method.child_by_field_name("parameters").map_or(0, |p| parameter_count(&p));
+pub fn check_parameters(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Method(method) = &tree.kind else { return };
+    let max = context.options.parameter_number.max as usize;
+    let count = method.params.len() + usize::from(method.receiver.is_some());
     if count > max {
-        let name = method.child_by_field_name("name").map_or(method.start_byte(), |n| n.start_byte());
         let message = format!("More than {max} parameters (found {count}).");
-        diagnostics.push(Diagnostic::new(Rule::ParameterNumber, name, message));
+        diagnostics.push(Diagnostic::new(Rule::ParameterNumber, method.name_pos, message));
     }
 }
 
-pub fn check_record_components(record: &Node, _text: &str, options: &RuleOptions, diagnostics: &mut Vec<Diagnostic>) {
-    let max = options.record_component_number.max as usize;
-    let count = record.child_by_field_name("parameters").map_or(0, |p| parameter_count(&p));
-    if count > max {
+pub fn check_record_components(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Class(class) = &tree.kind else { return };
+    let max = context.options.record_component_number.max as usize;
+    let count = class.record_components.len();
+    if class.kind == ClassKind::Record && count > max {
         let message = format!("Number of record components is {count} (max allowed is {max}).");
-        diagnostics.push(Diagnostic::new(Rule::RecordComponentNumber, record.start_byte(), message));
+        diagnostics.push(Diagnostic::new(Rule::RecordComponentNumber, tree.start, message));
     }
 }
 
-fn parameter_count(parameters: &Node) -> usize {
-    let mut cursor = parameters.walk();
-    parameters
-        .named_children(&mut cursor)
-        .filter(|p| matches!(p.kind(), "formal_parameter" | "spread_parameter" | "receiver_parameter"))
-        .count()
-}
-
-pub fn check_outer_types(program: &Node, _text: &str, options: &RuleOptions, diagnostics: &mut Vec<Diagnostic>) {
-    let max = options.outer_type_number.max as usize;
-    let count = program.named_children(&mut program.walk()).filter(is_type_declaration).count();
+pub fn check_outer_types(unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::CompilationUnit { types, .. } = &unit.kind else { return };
+    let max = context.options.outer_type_number.max as usize;
+    // Not the methods and fields of a compact source file.
+    let count = types.iter().filter(|t| matches!(t.kind, K::Class(_))).count();
     if count > max {
         let message = format!("Outer types defined is {count} (max allowed is {max}).");
-        diagnostics.push(Diagnostic::new(Rule::OuterTypeNumber, file_position(program), message));
+        diagnostics.push(Diagnostic::new(Rule::OuterTypeNumber, file_position(context), message));
     }
 }
 
-pub fn check_throws(method: &Node, text: &str, options: &RuleOptions, diagnostics: &mut Vec<Diagnostic>) {
-    let max = options.throws_count.max as usize;
-    let Some(throws) = method.named_children(&mut method.walk()).find(|c| c.kind() == "throws") else { return };
-    if has_modifier(method, text, "private") || is_overriding(method, text) {
+pub fn check_throws(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Method(method) = &tree.kind else { return };
+    let max = context.options.throws_count.max as usize;
+    let count = method.throws.len();
+    if count <= max
+        || has_modifier(&method.mods, context.text, context.tokens(), "private")
+        || method.mods.annotations.iter().any(is_override)
+    {
         return;
     }
-    let count = throws.named_children(&mut throws.walk()).filter(|c| !is_comment(c) && !is_annotation(c)).count();
-    if count > max {
-        let message = format!("Throws count is {count} (max allowed is {max}).");
-        diagnostics.push(Diagnostic::new(Rule::ThrowsCount, throws.start_byte(), message));
+    let throws = token_before(context, method.throws[0].start, method.throws[0].start);
+    let message = format!("Throws count is {count} (max allowed is {max}).");
+    diagnostics.push(Diagnostic::new(Rule::ThrowsCount, throws, message));
+}
+
+/// Whether the annotation is `@Override`, which Checkstyle recognizes by the last name of a qualified annotation with
+/// more than two names (`@java.lang.Override`) and by the first name of one with two names.
+fn is_override(annotation: &Tree) -> bool {
+    let K::Annotation { ty, .. } = &annotation.kind else { return false };
+    let mut names = Vec::new();
+    let mut name = &**ty;
+    while let K::MemberSelect { expr, name: last } = &name.kind {
+        names.push(last.as_str());
+        name = expr;
     }
-}
-
-fn is_annotation(node: &Node) -> bool {
-    matches!(node.kind(), "annotation" | "marker_annotation")
-}
-
-/// Whether the method is annotated with `@Override`, which Checkstyle recognizes by the last name of a qualified
-/// annotation with more than two names (`@java.lang.Override`) and by the first name of one with two names.
-fn is_overriding(method: &Node, text: &str) -> bool {
-    let Some(modifiers) = modifiers(method) else { return false };
-    modifiers.named_children(&mut modifiers.walk()).filter(is_annotation).any(|annotation| {
-        let name = annotation.child_by_field_name("name").map_or("", |n| source(&n, text));
-        let parts: Vec<&str> = name.split('.').map(str::trim).collect();
-        let checked = if parts.len() == 2 { parts[0] } else { parts[parts.len() - 1] };
-        checked == "Override"
-    })
+    if let K::Ident(first) = &name.kind {
+        names.push(first);
+    }
+    // The names are in reverse order.
+    let checked = match names.as_slice() {
+        [_, first] => first,
+        [last, ..] => last,
+        [] => return false,
+    };
+    *checked == "Override"
 }

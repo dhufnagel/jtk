@@ -9,24 +9,24 @@
 //! As in Checkstyle, lines end at `\n`, `\r\n` or `\r`, and a line terminator at the end of the file does not start
 //! another line.
 
-use tree_sitter::Node;
-
-use crate::lint::{Diagnostic, Rule, RuleOptions};
+use crate::ast::Tree;
+use crate::lint::tree::Context;
+use crate::lint::{Diagnostic, Rule};
 
 const TAB_WIDTH: usize = 8;
 
-pub fn check_file_length(_program: &Node, text: &str, options: &RuleOptions, diagnostics: &mut Vec<Diagnostic>) {
-    let max = options.file_length.max as usize;
-    let lines = lines(text).count();
+pub fn check_file_length(_unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let max = context.options.file_length.max as usize;
+    let lines = lines(context.text).count();
     if lines > max {
         let message = format!("File length is {lines} lines (max allowed is {max}).");
         diagnostics.push(Diagnostic::new(Rule::FileLength, 0, message));
     }
 }
 
-pub fn check_line_length(_program: &Node, text: &str, options: &RuleOptions, diagnostics: &mut Vec<Diagnostic>) {
-    let max = options.line_length.max as usize;
-    for (start, line) in lines(text) {
+pub fn check_line_length(_unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let max = context.options.line_length.max as usize;
+    for (start, line) in lines(context.text) {
         let is_short = line.len() <= max && !line.contains('\t');
         if is_short || line.starts_with("package ") || line.starts_with("import ") {
             continue;
