@@ -8,8 +8,7 @@
 
 use std::collections::HashMap;
 
-use tree_sitter::Node;
-
+use crate::ast::{K, LitKind, Tree, VarDecl};
 use crate::newlines::{self, jlen};
 
 const TEXT_BLOCK_DELIMITER: &str = "\"\"\"";
@@ -146,30 +145,83 @@ struct Reflower<'s> {
     lines: LineMap,
 }
 
-fn is_comment(n: &Node) -> bool {
-    matches!(n.kind(), "line_comment" | "block_comment")
+/// A node enclosing a string literal: a tree, or a node of javac's tree that is not a tree here (a case, a catch
+/// clause, an enum constant, a parameter), of which only the start matters.
+#[derive(Clone, Copy)]
+struct Enclosing<'t> {
+    start: usize,
+    tree: Option<&'t Tree>,
 }
 
-fn is_plus(n: &Node, input: &str) -> bool {
-    n.kind() == "binary_expression"
-        && n.child_by_field_name("operator").is_some_and(|op| &input[op.byte_range()] == "+")
+/// A string literal with the nodes enclosing it, outermost first.
+struct Found<'t> {
+    lit: &'t Tree,
+    ancestors: Vec<Enclosing<'t>>,
 }
 
-/// The parent, skipping nodes that javac does not have (e.g. argument lists).
-fn javac_parent<'t>(n: &Node<'t>) -> Option<Node<'t>> {
-    let p = n.parent()?;
-    if p.kind() == "argument_list" { p.parent() } else { Some(p) }
+impl<'t> Found<'t> {
+    fn parent(&self) -> Option<&'t Tree> {
+        self.ancestors.last()?.tree
+    }
+
+    /// The index in `ancestors` of the outermost of the `+` expressions directly enclosing the literal
+    /// (`ancestors.len()`, standing for the literal itself, if its parent is not a `+` expression).
+    fn concatenation(&self) -> usize {
+        let mut i = self.ancestors.len();
+        while i > 0 && self.ancestors[i - 1].tree.is_some_and(is_plus) {
+            i -= 1;
+        }
+        i
+    }
+
+    /// The literal (`i == ancestors.len()`) or the tree enclosing it at `i`.
+    fn tree(&self, i: usize) -> &'t Tree {
+        self.ancestors.get(i).map_or(self.lit, |a| a.tree.expect("a tree"))
+    }
+
+    fn start(&self, i: usize) -> usize {
+        self.ancestors.get(i).map_or(self.lit.start, |a| a.start)
+    }
 }
 
-fn flatten_expression_tree<'t>(root: Node<'t>, input: &str) -> Vec<Node<'t>> {
+/// The state of [`Reflower::scan`].
+struct Scan<'t> {
+    long_strings: Vec<Found<'t>>,
+    text_blocks: Vec<Found<'t>>,
+    ancestors: Vec<Enclosing<'t>>,
+}
+
+impl<'t> Scan<'t> {
+    fn found(&self, lit: &'t Tree) -> Found<'t> {
+        Found { lit, ancestors: self.ancestors.clone() }
+    }
+
+    /// Runs `f` inside a node that is not a tree, starting at `start`.
+    fn inside(&mut self, start: usize, f: impl FnOnce(&mut Self)) {
+        self.ancestors.push(Enclosing { start, tree: None });
+        f(self);
+        self.ancestors.pop();
+    }
+}
+
+fn is_string_literal(t: &Tree) -> bool {
+    matches!(t.kind, K::Literal(LitKind::String))
+}
+
+fn is_plus(t: &Tree) -> bool {
+    matches!(&t.kind, K::Binary { op, .. } if op == "+")
+}
+
+fn flatten_expression_tree(root: &Tree) -> Vec<&Tree> {
     let mut flat = Vec::new();
     let mut todo = vec![root];
     while let Some(first) = todo.pop() {
-        if is_plus(&first, input) {
-            todo.push(first.child_by_field_name("right").unwrap());
-            todo.push(first.child_by_field_name("left").unwrap());
-        } else {
-            flat.push(first);
+        match &first.kind {
+            K::Binary { op, lhs, rhs } if op == "+" => {
+                todo.push(rhs);
+                todo.push(lhs);
+            }
+            _ => flat.push(first),
         }
     }
     flat
@@ -213,7 +265,8 @@ fn strip_indent(s: &str) -> String {
 }
 
 fn reflow_replacements(column_limit: usize, input: &str) -> Replacements {
-    let Some(tree) = crate::parse::parse(input) else {
+    // Syntax errors are reported by the formatter.
+    let Some(unit) = crate::parser::parse_cached(input) else {
         return Vec::new();
     };
     let reflower = Reflower {
@@ -222,12 +275,11 @@ fn reflow_replacements(column_limit: usize, input: &str) -> Replacements {
         separator: newlines::guess_line_separator(input),
         lines: LineMap { starts: newlines::line_offsets(input) },
     };
-    let mut long_strings = Vec::new();
-    let mut text_blocks = Vec::new();
-    reflower.scan(tree.root_node(), &mut long_strings, &mut text_blocks);
+    let mut scan = Scan { long_strings: Vec::new(), text_blocks: Vec::new(), ancestors: Vec::new() };
+    reflower.scan(&unit, &mut scan);
     let mut replacements = Vec::new();
-    reflower.indent_text_blocks(&mut replacements, &text_blocks);
-    reflower.wrap_long_strings(&mut replacements, &long_strings);
+    reflower.indent_text_blocks(&mut replacements, &scan.text_blocks);
+    reflower.wrap_long_strings(&mut replacements, &scan.long_strings);
     replacements
 }
 
@@ -237,47 +289,105 @@ impl<'s> Reflower<'s> {
         jlen(&self.input[start..pos])
     }
 
-    fn scan<'t>(&self, n: Node<'t>, long_strings: &mut Vec<Node<'t>>, text_blocks: &mut Vec<Node<'t>>) {
-        if n.kind() == "string_literal" {
-            let pos = n.start_byte();
-            if self.input[pos..].starts_with(TEXT_BLOCK_DELIMITER) {
-                text_blocks.push(n);
+    /// Collects the text blocks and the string literals on overlong lines, in source order.
+    fn scan<'t>(&self, t: &'t Tree, s: &mut Scan<'t>) {
+        if is_string_literal(t) {
+            if self.input[t.start..].starts_with(TEXT_BLOCK_DELIMITER) {
+                s.text_blocks.push(s.found(t));
                 return;
             }
-            if let Some(p) = n.parent()
-                && matches!(p.kind(), "field_access" | "method_invocation")
-                && p.child_by_field_name("object").is_some_and(|o| o.id() == n.id())
+            // The receiver of a field access or method call.
+            if let Some(Enclosing { tree: Some(p), .. }) = s.ancestors.last()
+                && matches!(&p.kind, K::MemberSelect { expr, .. } if std::ptr::eq(&**expr, t))
             {
                 return;
             }
-            let mut line_end = n.end_byte();
+            let mut line_end = t.end;
             while line_end < self.input.len() && newlines::has_newline_at(self.input, line_end).is_none() {
                 line_end += 1;
             }
-            if self.column(line_end) <= self.column_limit {
-                return;
+            if self.column(line_end) > self.column_limit {
+                s.long_strings.push(s.found(t));
             }
-            long_strings.push(n);
             return;
         }
-        let mut cursor = n.walk();
-        for c in n.children(&mut cursor) {
-            self.scan(c, long_strings, text_blocks);
+        s.ancestors.push(Enclosing { start: t.start, tree: Some(t) });
+        let var = |v: &'t VarDecl, s: &mut Scan<'t>| {
+            s.inside(v.start, |s| {
+                v.mods.annotations.iter().chain(v.ty.as_deref()).chain(v.init.as_deref()).for_each(|c| self.scan(c, s));
+            })
+        };
+        match &t.kind {
+            K::Class(c) => {
+                c.mods.annotations.iter().chain(&c.type_params).for_each(|c| self.scan(c, s));
+                c.record_components.iter().for_each(|v| var(v, s));
+                c.extends.as_deref().into_iter().chain(&c.implements).chain(&c.permits).for_each(|c| self.scan(c, s));
+                for e in &c.enum_constants {
+                    s.inside(e.mods.start, |s| {
+                        e.mods
+                            .annotations
+                            .iter()
+                            .chain(&e.args)
+                            .chain(e.body.iter().flatten())
+                            .for_each(|c| self.scan(c, s));
+                    });
+                }
+                c.members.iter().for_each(|c| self.scan(c, s));
+            }
+            K::Method(m) => {
+                m.mods
+                    .annotations
+                    .iter()
+                    .chain(&m.type_params)
+                    .chain(&m.return_type_annotations)
+                    .chain(m.ret.as_deref())
+                    .for_each(|c| self.scan(c, s));
+                m.receiver.as_deref().into_iter().chain(&m.params).for_each(|v| var(v, s));
+                m.throws
+                    .iter()
+                    .chain(m.body.as_deref())
+                    .chain(m.default_value.as_deref())
+                    .for_each(|c| self.scan(c, s));
+            }
+            K::Switch { selector, cases } | K::SwitchExpr { selector, cases } => {
+                self.scan(selector, s);
+                for c in cases {
+                    s.inside(c.start, |s| {
+                        c.labels
+                            .iter()
+                            .chain(c.guard.as_deref())
+                            .chain(&c.stmts)
+                            .chain(c.body.as_deref())
+                            .for_each(|c| self.scan(c, s));
+                    });
+                }
+            }
+            K::Try { resources, block, catches, finally } => {
+                resources.iter().chain(std::iter::once(&**block)).for_each(|c| self.scan(c, s));
+                for c in catches {
+                    s.inside(c.start, |s| {
+                        var(&c.param, s);
+                        self.scan(&c.block, s);
+                    });
+                }
+                finally.iter().for_each(|c| self.scan(c, s));
+            }
+            _ => t.for_each_child(&mut |c| self.scan(c, s)),
         }
+        s.ancestors.pop();
     }
 
-    fn indent_text_blocks(&self, replacements: &mut Replacements, text_blocks: &[Node]) {
+    fn indent_text_blocks(&self, replacements: &mut Replacements, text_blocks: &[Found]) {
         let custom = self.compute_custom_text_blocks_indent(text_blocks);
-        for tb in text_blocks {
-            let start = tb.start_byte();
-            let end = tb.end_byte();
+        for (tb, custom) in text_blocks.iter().zip(custom) {
+            let (start, end) = (tb.lit.start, tb.lit.end);
             let text = &self.input[start..end];
             let line_start = self.lines.line_start(self.lines.line(start));
             let start_column = first_non_ws(&self.input[line_start..end]).unwrap_or(0);
             let initial_lines = java_lines(text);
             let stripped = strip_indent(&initial_lines[1..].join(self.separator));
             let lines = java_lines(&stripped);
-            let prefix = custom.get(&tb.id()).cloned().unwrap_or_else(|| {
+            let prefix = custom.unwrap_or_else(|| {
                 let extra = if line_start + start_column + 4 > start { "" } else { "    " };
                 format!("{extra}{}", " ".repeat(start_column))
             });
@@ -305,39 +415,38 @@ impl<'s> Reflower<'s> {
         }
     }
 
-    fn compute_custom_text_blocks_indent(&self, text_blocks: &[Node]) -> HashMap<usize, String> {
-        let mut parent_to_indent: HashMap<usize, String> = HashMap::new();
-        let mut result = HashMap::new();
+    /// The indentation of each text block that is an argument of a method call or part of a concatenation, `None`
+    /// for the others.
+    fn compute_custom_text_blocks_indent(&self, text_blocks: &[Found]) -> Vec<Option<String>> {
+        // Keyed by the address of the parent tree.
+        let mut parent_to_indent: HashMap<*const Tree, String> = HashMap::new();
+        let mut result = Vec::with_capacity(text_blocks.len());
         for tb in text_blocks {
-            let Some(parent) = javac_parent(tb) else { continue };
-            let is_arg = tb.parent().is_some_and(|p| p.kind() == "argument_list");
-            if is_arg && matches!(parent.kind(), "method_invocation" | "explicit_constructor_invocation") {
-                let args_node = tb.parent().unwrap();
-                let mut cursor = args_node.walk();
-                let args: Vec<Node> = args_node.named_children(&mut cursor).filter(|c| !is_comment(c)).collect();
-                let select_end = parent
-                    .child_by_field_name(if parent.kind() == "method_invocation" { "name" } else { "constructor" })
-                    .map(|n| n.end_byte())
-                    .unwrap_or(parent.end_byte());
-                let indent = parent_to_indent
-                    .entry(parent.id())
-                    .or_insert_with(|| self.compute_prefix_indentation(parent.start_byte(), select_end, &args, false))
-                    .clone();
-                result.insert(tb.id(), indent);
-            } else if is_plus(&parent, self.input) {
-                let mut root = parent;
-                while let Some(p) = root.parent()
-                    && is_plus(&p, self.input)
+            let indent = match tb.parent().map(|p| (p, &p.kind)) {
+                Some((parent, K::MethodInvocation { select, args, .. }))
+                    if args.iter().any(|a| std::ptr::eq(a, tb.lit)) =>
                 {
-                    root = p;
+                    let args: Vec<&Tree> = args.iter().collect();
+                    Some(
+                        parent_to_indent
+                            .entry(parent)
+                            .or_insert_with(|| self.compute_prefix_indentation(parent.start, select.end, &args, false))
+                            .clone(),
+                    )
                 }
-                let flat = flatten_expression_tree(root, self.input);
-                let indent = parent_to_indent
-                    .entry(root.id())
-                    .or_insert_with(|| self.compute_prefix_indentation(root.start_byte(), root.end_byte(), &flat, true))
-                    .clone();
-                result.insert(tb.id(), indent);
-            }
+                Some((parent, _)) if is_plus(parent) => {
+                    let root = tb.tree(tb.concatenation());
+                    let flat = flatten_expression_tree(root);
+                    Some(
+                        parent_to_indent
+                            .entry(root)
+                            .or_insert_with(|| self.compute_prefix_indentation(root.start, root.end, &flat, true))
+                            .clone(),
+                    )
+                }
+                _ => None,
+            };
+            result.push(indent);
         }
         result
     }
@@ -346,7 +455,7 @@ impl<'s> Reflower<'s> {
         &self,
         parent_start: usize,
         parent_end: usize,
-        children: &[Node],
+        children: &[&Tree],
         use_start_line: bool,
     ) -> String {
         let start_parent_line = self.lines.line(parent_start);
@@ -356,13 +465,13 @@ impl<'s> Reflower<'s> {
         let start_parent_column = first_non_ws(&self.input[line_parent_start..parent_end]).unwrap_or(0) as isize;
         let mut extra_indent: isize = 4;
         for e in children {
-            let starting_pos = e.start_byte();
+            let starting_pos = e.start;
             let start_line = self.lines.line(starting_pos);
             let line_start = self.lines.line_start(start_line);
             if start_line == parent_line {
                 continue;
             }
-            let start_column = first_non_ws(&self.input[line_start..e.end_byte()]).unwrap_or(0);
+            let start_column = first_non_ws(&self.input[line_start..e.end]).unwrap_or(0);
             if self.input[line_start + start_column..].starts_with(TEXT_BLOCK_DELIMITER)
                 && starting_pos != line_start + start_column
             {
@@ -373,24 +482,18 @@ impl<'s> Reflower<'s> {
         " ".repeat((extra_indent + start_parent_column).max(0) as usize)
     }
 
-    fn wrap_long_strings(&self, replacements: &mut Replacements, long_strings: &[Node]) {
+    fn wrap_long_strings(&self, replacements: &mut Replacements, long_strings: &[Found]) {
         for lit in long_strings {
-            let mut enclosing = *lit;
-            while let Some(p) = enclosing.parent()
-                && is_plus(&p, self.input)
-            {
-                enclosing = p;
-            }
-            let (flat, first) = self.flatten(lit, enclosing);
+            let enclosing = lit.concatenation();
+            let (flat, first) = self.flatten(lit.lit, lit.tree(enclosing));
+            // The outermost enclosing node that starts on the same line.
             let mut starting = enclosing;
-            while let Some(p) = javac_parent(&starting)
-                && self.lines.line(starting.start_byte()) == self.lines.line(p.start_byte())
-            {
-                starting = p;
+            while starting > 0 && self.lines.line(lit.start(starting)) == self.lines.line(lit.start(starting - 1)) {
+                starting -= 1;
             }
-            let start_column = self.column(flat[0].start_byte());
-            let first_line_col = self.column(starting.start_byte());
-            let end = flat[flat.len() - 1].end_byte();
+            let start_column = self.column(flat[0].start);
+            let first_line_col = self.column(lit.start(starting));
+            let end = flat[flat.len() - 1].end;
             let mut line_end = end;
             while line_end < self.input.len() && newlines::has_newline_at(self.input, line_end).is_none() {
                 line_end += 1;
@@ -399,42 +502,44 @@ impl<'s> Reflower<'s> {
             let components = self.string_components(&flat);
             put(
                 replacements,
-                flat[0].start_byte(),
+                flat[0].start,
                 end,
                 reflow(self.separator, self.column_limit, trailing, components, first, start_column, first_line_col),
             );
         }
     }
 
-    fn flatten<'t>(&self, lit: &Node<'t>, enclosing: Node<'t>) -> (Vec<Node<'t>>, bool) {
-        let flat = flatten_expression_tree(enclosing, self.input);
-        let idx = flat.iter().position(|n| n.id() == lit.id()).unwrap();
+    /// The run of string literals around `lit` in the concatenation `enclosing`, and whether it starts the
+    /// concatenation.
+    fn flatten<'t>(&self, lit: &'t Tree, enclosing: &'t Tree) -> (Vec<&'t Tree>, bool) {
+        let flat = flatten_expression_tree(enclosing);
+        let idx = flat.iter().position(|&n| std::ptr::eq(n, lit)).expect("the literal is part of the concatenation");
         let mut start_idx = idx;
         let mut end_idx = idx + 1;
         while start_idx > 0
-            && flat[start_idx - 1].kind() == "string_literal"
-            && self.no_comments(&flat[start_idx - 1], &flat[start_idx])
+            && is_string_literal(flat[start_idx - 1])
+            && self.no_comments(flat[start_idx - 1], flat[start_idx])
         {
             start_idx -= 1;
         }
         while end_idx < flat.len()
-            && flat[end_idx].kind() == "string_literal"
-            && self.no_comments(&flat[end_idx - 1], &flat[end_idx])
+            && is_string_literal(flat[end_idx])
+            && self.no_comments(flat[end_idx - 1], flat[end_idx])
         {
             end_idx += 1;
         }
         (flat[start_idx..end_idx].to_vec(), start_idx == 0)
     }
 
-    fn no_comments(&self, one: &Node, two: &Node) -> bool {
-        self.input[one.end_byte()..two.start_byte()].chars().all(|c| c.is_whitespace() || c == '"' || c == '+')
+    fn no_comments(&self, one: &Tree, two: &Tree) -> bool {
+        self.input[one.end..two.start].chars().all(|c| c.is_whitespace() || c == '"' || c == '+')
     }
 
-    fn string_components(&self, flat: &[Node]) -> Vec<String> {
+    fn string_components(&self, flat: &[&Tree]) -> Vec<String> {
         let mut result = Vec::new();
         let mut piece = String::new();
         for n in flat {
-            let text = &self.input[n.start_byte() + 1..n.end_byte() - 1];
+            let text = &self.input[n.start + 1..n.end - 1];
             let mut start = 0;
             let mut idx = 0;
             while idx < text.len() {

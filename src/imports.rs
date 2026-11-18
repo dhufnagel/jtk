@@ -7,8 +7,6 @@
 
 use std::collections::HashSet;
 
-use tree_sitter::Node;
-
 use crate::ast::{K, Tree};
 use crate::input::{Tok, build_toks_until};
 use crate::newlines;
@@ -233,39 +231,13 @@ pub fn remove_unused_imports(contents: &str) -> String {
 /// Formatting only changes whitespace and the order of modifiers, so this can be computed on the unformatted input
 /// (whose syntax tree is already cached) and applied to the formatted output with [`remove_imports`].
 pub fn used_import_names(source: &str) -> Option<HashSet<String>> {
-    if let Some(unit) = crate::parser::parse_cached(source) {
-        return Some(used_import_names_in(&unit, source));
-    }
-    let tree = crate::parse::parse(source)?;
-    let root = tree.root_node();
-    if root.has_error() {
-        // Errors are reported by the formatter.
-        return None;
-    }
-    let mut cursor = root.walk();
-    // Only identifiers spelled like the simple name of an import matter, so only those are classified.
-    let candidates: HashSet<&str> = root
-        .children(&mut cursor)
-        .filter(|c| c.kind() == "import_declaration")
-        .filter_map(|imp| {
-            let mut cursor = imp.walk();
-            let name = imp.named_children(&mut cursor).find(|c| !is_comment(c))?;
-            let simple = match name.kind() {
-                "scoped_identifier" => name.child_by_field_name("name")?,
-                _ => name,
-            };
-            Some(&source[simple.byte_range()])
-        })
-        .collect();
-    let mut used = HashSet::new();
-    if !candidates.is_empty() {
-        collect_used_names(root, source, &candidates, &mut used);
-    }
-    Some(used)
+    // Syntax errors are reported by the formatter.
+    let unit = crate::parser::parse_cached(source)?;
+    Some(used_import_names_in(&unit, source))
 }
 
-/// [`used_import_names`] from the hand-written parser's tree. It finds the same names as the tree-sitter version: in
-/// that tree, declared names, labels and the members of qualified names are strings, not identifiers.
+/// [`used_import_names`] of a parsed compilation unit. Declared names, labels and the members of qualified names are
+/// strings in the tree, not identifiers, so only references to names are found.
 fn used_import_names_in(unit: &Tree, source: &str) -> HashSet<String> {
     let K::CompilationUnit { imports, .. } = &unit.kind else { return HashSet::new() };
     // The simple name of each import (for `a.b.*`, `b`).
@@ -428,114 +400,6 @@ pub fn remove_imports(contents: &str, used: &HashSet<String>) -> String {
         result.replace_range(start..end, "");
     }
     result
-}
-
-fn is_comment(n: &Node) -> bool {
-    matches!(n.kind(), "line_comment" | "block_comment")
-}
-
-/// Is this identifier node one that javac represents as an `IdentifierTree` (a simple name reference)?
-fn is_name_reference(n: &Node) -> bool {
-    let Some(parent) = n.parent() else { return true };
-    let is_field = |f: &str| parent.child_by_field_name(f).is_some_and(|c| c.id() == n.id());
-    match parent.kind() {
-        // Qualified names: only the leftmost segment is an identifier reference.
-        "scoped_identifier" => !is_field("name"),
-        "scoped_type_identifier" => {
-            let mut cursor = parent.walk();
-            parent
-                .named_children(&mut cursor)
-                .find(|c| !is_comment(c) && !c.kind().ends_with("annotation"))
-                .map(|c| c.id())
-                == Some(n.id())
-        }
-        "field_access" => !is_field("field"),
-        "method_invocation" => !(is_field("name") && parent.child_by_field_name("object").is_some()),
-        "method_reference" => {
-            // The name after `::` is a member name.
-            let mut cursor = parent.walk();
-            let after_colons = parent.children(&mut cursor).skip_while(|c| c.kind() != "::").any(|c| c.id() == n.id());
-            !after_colons
-        }
-        // Declarations
-        "class_declaration"
-        | "interface_declaration"
-        | "enum_declaration"
-        | "record_declaration"
-        | "annotation_type_declaration"
-        | "method_declaration"
-        | "constructor_declaration"
-        | "compact_constructor_declaration"
-        | "annotation_type_element_declaration"
-        | "variable_declarator"
-        | "formal_parameter"
-        | "catch_formal_parameter"
-        | "enum_constant"
-        | "enhanced_for_statement"
-        | "resource"
-        | "instanceof_expression" => !is_field("name"),
-        "element_value_pair" => !is_field("key"),
-        "type_parameter" => {
-            let mut cursor = parent.walk();
-            parent.named_children(&mut cursor).find(|c| c.kind() == "type_identifier").map(|c| c.id()) != Some(n.id())
-        }
-        "lambda_expression"
-        | "inferred_parameters"
-        | "labeled_statement"
-        | "break_statement"
-        | "continue_statement" => false,
-        "type_pattern" | "record_pattern_component" => {
-            // The last identifier is the binding name.
-            let mut cursor = parent.walk();
-            parent.named_children(&mut cursor).last().map(|c| c.id()) != Some(n.id())
-        }
-        _ => true,
-    }
-}
-
-fn collect_used_names(root: Node, src: &str, candidates: &HashSet<&str>, used: &mut HashSet<String>) {
-    // Iterative pre-order traversal with a single cursor.
-    let mut cursor = root.walk();
-    loop {
-        let n = cursor.node();
-        let descend = match n.kind() {
-            "import_declaration" => false,
-            "identifier" | "type_identifier" => {
-                let name = &src[n.byte_range()];
-                // Classifying needs `Node::parent`, which is slow, so only do it when the answer can matter.
-                if candidates.contains(name) && !used.contains(name) && is_name_reference(&n) {
-                    used.insert(name.to_string());
-                }
-                false
-            }
-            "block_comment" => {
-                let text = &src[n.byte_range()];
-                if text.starts_with("/**") {
-                    collect_javadoc_references(text, used);
-                }
-                false
-            }
-            // Markdown documentation comments (Java 23): block tags as in javadoc, plus reference links like
-            // `[Foo]`, `[text][Foo]` or `[Foo#bar(Baz)]`.
-            "line_comment" => {
-                let text = &src[n.byte_range()];
-                if text.starts_with("///") {
-                    collect_javadoc_references(text, used);
-                    collect_markdown_references(text, used);
-                }
-                false
-            }
-            _ => true,
-        };
-        if descend && cursor.goto_first_child() {
-            continue;
-        }
-        while !cursor.goto_next_sibling() {
-            if !cursor.goto_parent() {
-                return;
-            }
-        }
-    }
 }
 
 /// Records names referenced from javadoc `{@link}`, `{@linkplain}`, `{@value}`, `@see`, `@throws` and `@exception`.
