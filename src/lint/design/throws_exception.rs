@@ -13,10 +13,9 @@
 //! written fully qualified or imported by a single-type import (not by `import org.junit.*;`). A JUnit 3 test class is
 //! a top-level, concrete class extending `TestCase`.
 
-use tree_sitter::Node;
-
-use super::{has_keyword, qualified_name, root};
-use crate::lint::syntax::{modifiers, named_children, source};
+use super::{has_keyword, qualified_name, simple_name, single_type_imports};
+use crate::ast::{ClassDecl, ClassKind, K, MethodDecl, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
 /// JUnit 4 and 5 and TestNG annotations of test methods.
@@ -60,111 +59,93 @@ const OBJECT_METHODS: &[(&str, usize)] =
 const THROWING_INTERFACE_METHODS: &[(&str, &str)] =
     &[("Callable", "call"), ("PrivilegedExceptionAction", "run"), ("AutoCloseable", "close")];
 
-pub fn check(declaration: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(throws) = named_children(declaration).into_iter().find(|c| c.kind() == "throws") else { return };
-    let throws_exception = named_children(&throws)
-        .iter()
-        .any(|t| matches!(qualified_name(t, text).as_str(), "Exception" | "java.lang.Exception"));
-    if !throws_exception || declaration.kind() == "method_declaration" && is_ignored(declaration, text) {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Method(method) = &tree.kind else { return };
+    let Some(first) = method.throws.first() else { return };
+    let throws_exception =
+        method.throws.iter().any(|t| matches!(qualified_name(t).as_str(), "Exception" | "java.lang.Exception"));
+    if !throws_exception || method.ret.is_some() && is_ignored(method, context) {
         return;
     }
+    let throws = context.tokens().previous(first.start).map_or(first.start, |t| t.start);
     let message = "A method/constructor should not explicitly throw java.lang.Exception";
-    diagnostics.push(Diagnostic::new(Rule::ThrowsException, throws.start_byte(), message));
+    diagnostics.push(Diagnostic::new(Rule::ThrowsException, throws, message));
 }
 
 /// Whether the method is a test or test configuration method, or overrides a method.
-fn is_ignored(method: &Node, text: &str) -> bool {
-    let annotations = annotation_names(method, text);
+fn is_ignored(method: &MethodDecl, context: &Context) -> bool {
+    let annotations: Vec<String> = method
+        .mods
+        .annotations
+        .iter()
+        .filter_map(|a| match &a.kind {
+            K::Annotation { ty, .. } => Some(qualified_name(ty)),
+            _ => None,
+        })
+        .collect();
     if annotations.iter().any(|a| a == "Override" || a == "java.lang.Override") {
         return true;
     }
-    // Only the rare methods that would be reported get here: the expensive `Node::parent` is fine.
-    let Some(body) = method.parent() else { return false };
-    let Some(owner) = body.parent() else { return false };
-    let program = root(&owner);
-    let is_annotated =
-        |names: &[&str]| annotations.iter().any(|a| names.contains(&resolve(a, &program, text).as_str()));
+    let unit = context.ancestors[0];
+    let is_annotated = |names: &[&str]| annotations.iter().any(|a| names.contains(&resolve(a, unit).as_str()));
     if is_annotated(TEST_ANNOTATIONS) || is_annotated(CONFIGURATION_ANNOTATIONS) {
         return true;
     }
-    let name = method.child_by_field_name("name").map_or("", |n| source(&n, text));
+    let has = |keyword| has_keyword(&method.mods, method.name_pos, keyword, context);
+    let owner = context.parent();
+    let name = method.name.as_str();
     let is_junit3_method = name == "setUp"
         || name == "tearDown"
         || name.starts_with("test")
-            && has_keyword(method, text, "public")
-            && method.child_by_field_name("type").is_some_and(|t| t.kind() == "void_type");
-    if is_junit3_method && is_junit3_class(&owner, &program, text) {
+            && has("public")
+            && method.ret.as_deref().is_some_and(|r| matches!(&r.kind, K::Primitive(p) if p == "void"));
+    if is_junit3_method && owner.is_some_and(|o| is_junit3_class(o, context)) {
         return true;
     }
-    overrides_jdk_method(method, &owner, text)
-}
-
-/// The names of the method's annotations, as written.
-fn annotation_names(method: &Node, text: &str) -> Vec<String> {
-    let Some(modifiers) = modifiers(method) else { return Vec::new() };
-    named_children(&modifiers)
-        .iter()
-        .filter(|m| matches!(m.kind(), "annotation" | "marker_annotation"))
-        .filter_map(|a| a.child_by_field_name("name"))
-        .map(|n| qualified_name(&n, text))
-        .collect()
+    if has("static") || has("private") {
+        return false;
+    }
+    overrides_jdk_method(method, owner)
 }
 
 /// The qualified name of a type name: as written if qualified, else from its single-type import (else unresolved,
 /// returned as written).
-fn resolve(name: &str, program: &Node, text: &str) -> String {
+fn resolve(name: &str, unit: &Tree) -> String {
     if name.contains('.') {
         return name.to_string();
     }
     let suffix = format!(".{name}");
-    named_children(program)
-        .iter()
-        .filter(|c| c.kind() == "import_declaration" && !named_children(c).iter().any(|n| n.kind() == "asterisk"))
-        .filter_map(|i| named_children(i).into_iter().find(|n| matches!(n.kind(), "scoped_identifier" | "identifier")))
-        .map(|n| qualified_name(&n, text))
-        .find(|imported| imported.ends_with(&suffix))
-        .unwrap_or_else(|| name.to_string())
+    single_type_imports(unit).find(|imported| imported.ends_with(&suffix)).unwrap_or_else(|| name.to_string())
 }
 
 /// Whether the type is a top-level, concrete class extending JUnit 3's `TestCase`.
-fn is_junit3_class(owner: &Node, program: &Node, text: &str) -> bool {
-    owner.kind() == "class_declaration"
-        && owner.parent().is_some_and(|p| p.kind() == "program")
-        && !has_keyword(owner, text, "abstract")
-        && owner.child_by_field_name("superclass").is_some_and(|s| {
-            named_children(&s)
-                .iter()
-                .any(|t| resolve(&qualified_name(t, text), program, text) == "junit.framework.TestCase")
-        })
+fn is_junit3_class(owner: &Tree, context: &Context) -> bool {
+    let K::Class(class) = &owner.kind else { return false };
+    let unit = context.ancestors[0];
+    class.kind == ClassKind::Class
+        && context.grandparent().is_some_and(|g| std::ptr::eq(g, unit))
+        && !has_keyword(&class.mods, class.name_pos, "abstract", context)
+        && class.extends.as_deref().is_some_and(|s| resolve(&qualified_name(s), unit) == "junit.framework.TestCase")
 }
 
 /// Whether the method overrides one of the JDK's methods that PMD finds by type: a method of `Object`, or of an
 /// interface declaring `throws Exception` that its type (a class or anonymous class) implements.
-fn overrides_jdk_method(method: &Node, owner: &Node, text: &str) -> bool {
-    if has_keyword(method, text, "static") || has_keyword(method, text, "private") {
-        return false;
-    }
-    let name = method.child_by_field_name("name").map_or("", |n| source(&n, text));
-    let arity = method.child_by_field_name("parameters").map_or(0, |p| {
-        named_children(&p).iter().filter(|c| matches!(c.kind(), "formal_parameter" | "spread_parameter")).count()
-    });
+fn overrides_jdk_method(method: &MethodDecl, owner: Option<&Tree>) -> bool {
+    let name = method.name.as_str();
+    let arity = method.params.len();
     if OBJECT_METHODS.contains(&(name, arity)) {
         return true;
     }
-    let supertypes: Vec<Node> = match owner.kind() {
-        "object_creation_expression" => owner.child_by_field_name("type").into_iter().collect(),
-        "class_declaration" | "enum_declaration" | "record_declaration" => owner
-            .child_by_field_name("interfaces")
-            .into_iter()
-            .flat_map(|i| named_children(&i))
-            .flat_map(|list| named_children(&list))
-            .collect(),
-        _ => Vec::new(),
+    let supertypes: &[Tree] = match owner.map(|o| &o.kind) {
+        Some(K::NewClass { ident, .. }) => std::slice::from_ref(&**ident),
+        Some(K::Class(class)) if implements_interfaces(class) => &class.implements,
+        _ => &[],
     };
     arity == 0
-        && supertypes.iter().any(|t| {
-            let supertype = qualified_name(t, text);
-            let simple = supertype.rsplit('.').next().unwrap_or_default();
-            THROWING_INTERFACE_METHODS.contains(&(simple, name))
-        })
+        && supertypes.iter().any(|t| THROWING_INTERFACE_METHODS.contains(&(simple_name(&qualified_name(t)), name)))
+}
+
+/// Whether the type's `implements` clause lists interfaces it implements (an interface's lists those it extends).
+fn implements_interfaces(class: &ClassDecl) -> bool {
+    matches!(class.kind, ClassKind::Class | ClassKind::Enum | ClassKind::Record)
 }

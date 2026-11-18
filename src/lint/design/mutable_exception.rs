@@ -5,31 +5,37 @@
 //! classes, which are checked on their own), and an extended class with type arguments does not count as an
 //! exception.
 
-use tree_sitter::Node;
-
-use super::{body, declarator_names, has_keyword};
-use crate::lint::syntax::{for_each_descendant, named_children, source};
+use super::has_keyword;
+use crate::ast::{ClassKind, K, Tree};
+use crate::lint::tree::{Context, for_each_descendant};
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(class: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let name = class.child_by_field_name("name").map_or("", |n| source(&n, text));
-    if !is_exception_name(name) || !extends_exception(class, text) {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Class(class) = &tree.kind else { return };
+    if class.kind != ClassKind::Class || !is_exception_name(&class.name) || !extends_exception(class.extends.as_deref())
+    {
         return;
     }
-    let Some(body) = body(class) else { return };
-    check_fields(&body, text, diagnostics);
+    let is_class = |node: &Tree| matches!(&node.kind, K::Class(nested) if nested.kind == ClassKind::Class);
+    for member in class.members.iter().filter(|m| !is_class(m)) {
+        check_field(member, tree, context, diagnostics);
+        for_each_descendant(member, &mut |node, parent| {
+            check_field(node, parent, context, diagnostics);
+            !is_class(node)
+        });
+    }
 }
 
-/// Reports the non-final fields in a body, skipping nested classes.
-fn check_fields(body: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    for_each_descendant(body, &["class_declaration"], |node| {
-        if matches!(node.kind(), "field_declaration" | "constant_declaration") && !has_keyword(node, text, "final") {
-            for name in declarator_names(node) {
-                let message = format!("The field '{}' must be declared final", source(&name, text));
-                diagnostics.push(Diagnostic::new(Rule::MutableException, node.start_byte(), message));
-            }
+/// Reports a field declaration that is not final.
+fn check_field(node: &Tree, parent: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Vars(vars) = &node.kind else { return };
+    let is_field = matches!(parent.kind, K::Class(_) | K::NewClass { .. });
+    if is_field && !has_keyword(&vars[0].mods, vars[0].name_pos, "final", context) {
+        for var in vars {
+            let message = format!("The field '{}' must be declared final", var.name);
+            diagnostics.push(Diagnostic::new(Rule::MutableException, node.start, message));
         }
-    });
+    }
 }
 
 fn is_exception_name(name: &str) -> bool {
@@ -37,13 +43,9 @@ fn is_exception_name(name: &str) -> bool {
 }
 
 /// Whether the class extends a class named like an exception, without type arguments.
-fn extends_exception(class: &Node, text: &str) -> bool {
-    let Some(superclass) = class.child_by_field_name("superclass") else { return false };
-    let Some(ty) = named_children(&superclass).into_iter().last() else { return false };
-    let last_name = match ty.kind() {
-        "type_identifier" => source(&ty, text),
-        "scoped_type_identifier" => named_children(&ty).last().map_or("", |n| source(n, text)),
-        _ => return false,
-    };
-    is_exception_name(last_name)
+fn extends_exception(superclass: Option<&Tree>) -> bool {
+    match superclass.map(|s| &s.kind) {
+        Some(K::Ident(name) | K::MemberSelect { name, .. }) => is_exception_name(name),
+        _ => false,
+    }
 }

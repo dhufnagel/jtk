@@ -9,137 +9,131 @@
 //!
 //! Unlike Checkstyle without its suppression filter, jtk honours `@SuppressWarnings("MagicNumber")`.
 
-use tree_sitter::Node;
+use super::has_keyword;
+use crate::ast::{ClassKind, K, LitKind, Tree};
+use crate::lint::tree::Context;
+use crate::lint::{Diagnostic, Rule};
 
-use super::{TYPE_DECLARATIONS, has_keyword, walk};
-use crate::lint::syntax::{operator, source};
-use crate::lint::{Diagnostic, Rule, RuleOptions};
-
-pub fn check(program: &Node, text: &str, options: &RuleOptions, diagnostics: &mut Vec<Diagnostic>) {
-    let ignored = &options.magic_number.ignore_numbers;
-    let mut ancestors: Vec<Node> = Vec::new();
-    walk(program, |node, enter| {
-        if !enter {
-            ancestors.pop();
-            return;
-        }
-        if is_number(node) {
-            check_number(node, &ancestors, ignored, text, diagnostics);
-        }
-        ancestors.push(*node);
-    });
-}
-
-fn is_number(node: &Node) -> bool {
-    matches!(
-        node.kind(),
-        "decimal_integer_literal"
-            | "hex_integer_literal"
-            | "octal_integer_literal"
-            | "binary_integer_literal"
-            | "decimal_floating_point_literal"
-            | "hex_floating_point_literal"
-    )
-}
-
-fn check_number(number: &Node, ancestors: &[Node], ignored: &[f64], text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if ancestors.iter().any(|a| a.kind() == "annotation_type_element_declaration") {
+pub fn check(number: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if !matches!(number.kind, K::Literal(LitKind::Int | LitKind::Long | LitKind::Float | LitKind::Double)) {
         return;
     }
-    // The sign before the number, outside any parentheses.
-    let sign = ancestors
-        .iter()
-        .rev()
-        .find(|a| a.kind() != "parenthesized_expression")
-        .filter(|a| a.kind() == "unary_expression" && matches!(operator(a, text), "-" | "+"));
-    let is_negative = sign.is_some_and(|s| operator(s, text) == "-");
-    let value = value(number, text).map(|v| if is_negative { -v } else { v });
+    let ancestors = &context.ancestors;
+    if is_in_annotation_element(ancestors) {
+        return;
+    }
+    let source = context.source(number);
+    // The sign before the number, outside any parentheses: the parser folds a `-` into a decimal integer.
+    let (sign, digits) = match source.strip_prefix('-') {
+        Some(rest) if rest.starts_with(|c: char| c.is_ascii_digit()) => (Some(("-", number.start)), rest),
+        Some(_) => {
+            let token = context.tokens().previous(number.end).unwrap_or(number.start..number.end);
+            (Some(("-", number.start)), &context.text[token])
+        }
+        None => {
+            let sign = ancestors.iter().rev().find(|a| !matches!(a.kind, K::Parens(_))).and_then(|a| match &a.kind {
+                K::Unary { op, .. } if matches!(op.as_str(), "-" | "+") => Some((op.as_str(), a.start)),
+                _ => None,
+            });
+            (sign, source)
+        }
+    };
+    let is_negative = sign.is_some_and(|(op, _)| op == "-");
+    let value = value(digits).map(|v| if is_negative { -v } else { v });
     // Compared like Java's `Arrays.binarySearch`, for which -0.0 is not 0.
+    let ignored = &context.options.magic_number.ignore_numbers;
     let is_ignored = value.is_some_and(|v| ignored.iter().any(|n| n.total_cmp(&v).is_eq()));
-    if is_ignored || !is_magic(number, ancestors, text) {
+    if is_ignored || !is_magic(number, ancestors, context) {
         return;
     }
-    let (offset, prefix) = sign.map_or((number.start_byte(), ""), |s| (s.start_byte(), operator(s, text)));
-    let message = format!("'{prefix}{}' is a magic number", source(number, text));
+    let (prefix, offset) = sign.unwrap_or(("", number.start));
+    let message = format!("'{prefix}{digits}' is a magic number");
     diagnostics.push(Diagnostic::new(Rule::MagicNumber, offset, message));
 }
 
+/// Whether one of the trees is an element of an annotation type.
+fn is_in_annotation_element(ancestors: &[&Tree]) -> bool {
+    ancestors.windows(2).any(|pair| {
+        matches!(&pair[0].kind, K::Class(class) if class.kind == ClassKind::Annotation)
+            && matches!(pair[1].kind, K::Method(_))
+    })
+}
+
 /// Whether a number with these ancestors is not part of a constant definition.
-fn is_magic(number: &Node, ancestors: &[Node], text: &str) -> bool {
+fn is_magic(number: &Tree, ancestors: &[&Tree], context: &Context) -> bool {
+    let child = |i: usize| ancestors.get(i + 1).copied().unwrap_or(number);
     // The nearest definition of a variable or enum constant.
-    let Some(definition) = ancestors.iter().rposition(|a| matches!(a.kind(), "enum_constant" | "variable_declarator"))
-    else {
+    let Some(definition) = (0..ancestors.len()).rev().find(|&i| is_definition(ancestors[i], child(i))) else {
         return true;
     };
-    if ancestors[definition].kind() == "variable_declarator" {
-        let declaration = &ancestors[definition - 1];
+    if let K::Vars(vars) = &ancestors[definition].kind {
         let is_constant =
-            matches!(declaration.kind(), "field_declaration" | "local_variable_declaration" | "constant_declaration")
-                && (is_in_interface(&ancestors[..definition - 1]) || has_keyword(declaration, text, "final"));
+            is_in_interface(&ancestors[..definition]) || has_keyword(&vars[0].mods, vars[0].name_pos, "final", context);
         if !is_constant {
             return true;
         }
     }
     // Whether some expression between the definition and the number is not one constants may be built with.
-    (definition + 1..ancestors.len()).any(|i| {
-        let child = ancestors.get(i + 1).unwrap_or(number);
-        !is_constant_expression(&ancestors[i], child, text)
-    })
+    (definition + 1..ancestors.len()).any(|i| !is_constant_expression(ancestors[i], child(i)))
+}
+
+/// Whether the tree defines a variable or enum constant with `child` as its value or argument.
+fn is_definition(tree: &Tree, child: &Tree) -> bool {
+    match &tree.kind {
+        K::Vars(vars) => vars.iter().any(|v| v.init.as_deref().is_some_and(|init| std::ptr::eq(init, child))),
+        K::Class(class) => class.enum_constants.iter().any(|c| c.args.iter().any(|a| std::ptr::eq(a, child))),
+        _ => false,
+    }
 }
 
 /// Whether the nearest enclosing type of a declaration is an interface or annotation type, as Checkstyle sees it:
 /// it stops at any `new` expression.
-fn is_in_interface(ancestors: &[Node]) -> bool {
+fn is_in_interface(ancestors: &[&Tree]) -> bool {
     ancestors
         .iter()
         .rev()
-        .find(|a| {
-            TYPE_DECLARATIONS.contains(&a.kind())
-                || matches!(a.kind(), "object_creation_expression" | "array_creation_expression")
-        })
-        .is_some_and(|a| matches!(a.kind(), "interface_declaration" | "annotation_type_declaration"))
+        .find(|a| matches!(a.kind, K::Class(_) | K::NewClass { .. } | K::NewArray { .. }))
+        .is_some_and(|a| matches!(&a.kind, K::Class(class) if matches!(class.kind, ClassKind::Interface | ClassKind::Annotation)))
 }
 
-/// Whether a constant may contain an expression of the kind of `node` around its `child` (Checkstyle's
+/// Whether a constant may contain an expression of the kind of `tree` around its `child` (Checkstyle's
 /// `constantWaiverParentToken`).
-fn is_constant_expression(node: &Node, child: &Node, text: &str) -> bool {
-    match node.kind() {
-        "parenthesized_expression"
-        | "cast_expression"
-        | "ternary_expression"
-        | "argument_list"
-        | "array_initializer"
-        | "object_creation_expression"
-        | "array_creation_expression" => true,
-        "binary_expression" => !matches!(operator(node, text), "&&" | "||"),
-        "unary_expression" => operator(node, text) != "!",
-        "assignment_expression" => operator(node, text) == "=",
-        "method_invocation" => child.kind() == "argument_list",
+fn is_constant_expression(tree: &Tree, child: &Tree) -> bool {
+    let is_child = |t: &Tree| std::ptr::eq(t, child);
+    match &tree.kind {
+        K::Parens(_) | K::Cast { .. } | K::Conditional { .. } => true,
+        K::NewClass { body, .. } => !body.iter().flatten().any(is_child),
+        K::NewArray { init, .. } => init.iter().flatten().any(is_child),
+        K::Binary { op, .. } => !matches!(op.as_str(), "&&" | "||"),
+        K::Unary { op, .. } => op != "!",
+        K::Assign { op, .. } => op == "=",
+        K::MethodInvocation { args, .. } => args.iter().any(is_child),
         _ => false,
     }
 }
 
 /// The value of a numeric literal, as Checkstyle parses it.
-fn value(number: &Node, text: &str) -> Option<f64> {
-    let literal = source(number, text).replace('_', "");
-    match number.kind() {
-        "decimal_floating_point_literal" => literal.trim_end_matches(['f', 'F', 'd', 'D']).parse().ok(),
-        "hex_floating_point_literal" => None,
-        _ => {
-            let is_long = literal.ends_with(['l', 'L']);
-            let literal = literal.trim_end_matches(['l', 'L']);
-            let (digits, radix) = if let Some(hex) = literal.strip_prefix("0x").or_else(|| literal.strip_prefix("0X")) {
-                (hex, 16)
-            } else if let Some(binary) = literal.strip_prefix("0b").or_else(|| literal.strip_prefix("0B")) {
-                (binary, 2)
-            } else if literal.len() > 1 && literal.starts_with('0') {
-                (&literal[1..], 8)
-            } else {
-                (literal, 10)
-            };
-            // Like Java's `parseUnsignedInt` and `parseUnsignedLong`: `0xffffffff` is -1.
-            let value = u64::from_str_radix(digits, radix).ok()?;
-            Some(if is_long { value as i64 as f64 } else { value as u32 as i32 as f64 })
-        }
+fn value(literal: &str) -> Option<f64> {
+    let literal = literal.replace('_', "");
+    let lower = literal.to_ascii_lowercase();
+    let is_hex = lower.starts_with("0x");
+    let is_float = if is_hex { lower.contains('p') } else { lower.contains(['.', 'e']) || lower.ends_with(['f', 'd']) };
+    if is_float {
+        // Hexadecimal floating point literals are not parsed.
+        return if is_hex { None } else { lower.trim_end_matches(['f', 'd']).parse().ok() };
     }
+    let is_long = lower.ends_with('l');
+    let lower = lower.trim_end_matches('l');
+    let (digits, radix) = if let Some(hex) = lower.strip_prefix("0x") {
+        (hex, 16)
+    } else if let Some(binary) = lower.strip_prefix("0b") {
+        (binary, 2)
+    } else if lower.len() > 1 && lower.starts_with('0') {
+        (&lower[1..], 8)
+    } else {
+        (lower, 10)
+    };
+    // Like Java's `parseUnsignedInt` and `parseUnsignedLong`: `0xffffffff` is -1.
+    let value = u64::from_str_radix(digits, radix).ok()?;
+    Some(if is_long { value as i64 as f64 } else { value as u32 as i32 as f64 })
 }

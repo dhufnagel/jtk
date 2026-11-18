@@ -2,25 +2,27 @@
 //!
 //! As in Checkstyle, the public type (or else the first one) may stay; every other top-level type is reported.
 
-use tree_sitter::Node;
-
-use super::{has_keyword, is_type_declaration};
-use crate::lint::syntax::{named_children, source};
+use super::{has_keyword, top_level_types};
+use crate::ast::Tree;
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(program: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let types: Vec<Node> = named_children(program).into_iter().filter(is_type_declaration).collect();
-    let Some(first) = types.first() else { return };
-    let is_public = |t: &Node| has_keyword(t, text, "public");
-    let mut report = |t: &Node| {
-        let name = t.child_by_field_name("name").map_or("", |n| source(&n, text));
-        let message = format!("Top-level class {name} has to reside in its own source file");
-        diagnostics.push(Diagnostic::new(Rule::OneTopLevelClass, t.start_byte(), message));
-    };
-    if !is_public(first) && types.iter().any(is_public) {
-        report(first);
+pub fn check(unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    if top_level_types(unit).nth(1).is_none() {
+        return;
     }
-    for t in types.iter().skip(1).filter(|t| !is_public(t)) {
-        report(t);
+    let types: Vec<_> = top_level_types(unit)
+        .map(|(tree, class)| (tree, &class.name, has_keyword(&class.mods, class.name_pos, "public", context)))
+        .collect();
+    let Some(&(_, _, first_is_public)) = types.first() else { return };
+    let any_public = types.iter().any(|(_, _, is_public)| *is_public);
+    let reported = types.iter().enumerate().filter(
+        |(i, (_, _, is_public))| {
+            if *i == 0 { !first_is_public && any_public } else { !is_public }
+        },
+    );
+    for (_, (tree, name, _)) in reported {
+        let message = format!("Top-level class {name} has to reside in its own source file");
+        diagnostics.push(Diagnostic::new(Rule::OneTopLevelClass, tree.start, message));
     }
 }

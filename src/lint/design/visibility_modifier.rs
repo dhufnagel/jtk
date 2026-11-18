@@ -4,54 +4,50 @@
 //! `@ClassRule` or Guava's `@VisibleForTesting` (by simple name, unless an import names another type so). Interface
 //! and annotation constants are not fields in this sense.
 
-use tree_sitter::Node;
-
-use super::{declarator_names, has_keyword, qualified_name, root};
-use crate::lint::syntax::{modifiers, named_children, source};
+use super::{has_keyword, qualified_name, simple_name, single_type_imports};
+use crate::ast::{ClassKind, K, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
 /// The annotations that make a field visible on purpose.
 const IGNORED_ANNOTATIONS: &[&str] =
     &["org.junit.Rule", "org.junit.ClassRule", "com.google.common.annotations.VisibleForTesting"];
 
-pub fn check(field: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let allowed = has_keyword(field, text, "private")
-        || (has_keyword(field, text, "static") && has_keyword(field, text, "final"))
-        || has_ignored_annotation(field, text);
-    if allowed {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Vars(vars) = &tree.kind else { return };
+    let is_field = match context.parent().map(|p| &p.kind) {
+        Some(K::Class(class)) => !matches!(class.kind, ClassKind::Interface | ClassKind::Annotation),
+        Some(K::NewClass { .. }) => true,
+        _ => false,
+    };
+    if !is_field {
         return;
     }
-    let is_public = has_keyword(field, text, "public");
-    for name in declarator_names(field) {
-        let name_text = source(&name, text);
-        if !(is_public && name_text == "serialVersionUID") {
-            let message = format!("Variable '{name_text}' must be private and have accessor methods");
-            diagnostics.push(Diagnostic::new(Rule::VisibilityModifier, name.start_byte(), message));
+    let mods = &vars[0].mods;
+    let has = |keyword| has_keyword(mods, vars[0].name_pos, keyword, context);
+    if has("private") || (has("static") && has("final")) || has_ignored_annotation(&mods.annotations, context) {
+        return;
+    }
+    let is_public = has("public");
+    for var in vars {
+        if !(is_public && var.name == "serialVersionUID") {
+            let message = format!("Variable '{}' must be private and have accessor methods", var.name);
+            diagnostics.push(Diagnostic::new(Rule::VisibilityModifier, var.name_pos, message));
         }
     }
 }
 
-fn has_ignored_annotation(field: &Node, text: &str) -> bool {
-    let Some(modifiers) = modifiers(field) else { return false };
-    named_children(&modifiers).iter().filter(|a| matches!(a.kind(), "annotation" | "marker_annotation")).any(|a| {
-        let Some(name) = a.child_by_field_name("name") else { return false };
-        let name = qualified_name(&name, text);
+fn has_ignored_annotation(annotations: &[Tree], context: &Context) -> bool {
+    annotations.iter().any(|annotation| {
+        let K::Annotation { ty, .. } = &annotation.kind else { return false };
+        let name = qualified_name(ty);
         IGNORED_ANNOTATIONS.contains(&name.as_str())
-            || IGNORED_ANNOTATIONS.iter().any(|i| i.rsplit('.').next() == Some(name.as_str()))
-                && !imports_other_type(field, &name, text)
+            || IGNORED_ANNOTATIONS.iter().any(|i| simple_name(i) == name) && !imports_other_type(&name, context)
     })
 }
 
 /// Whether the file imports a type with the simple name other than the ignored annotations.
-fn imports_other_type(node: &Node, simple_name: &str, text: &str) -> bool {
-    named_children(&root(node)).iter().filter(|c| c.kind() == "import_declaration").any(|import| {
-        let Some(name) =
-            named_children(import).into_iter().find(|c| matches!(c.kind(), "scoped_identifier" | "identifier"))
-        else {
-            return false;
-        };
-        let is_star = named_children(import).iter().any(|c| c.kind() == "asterisk");
-        let name = qualified_name(&name, text);
-        !is_star && name.rsplit('.').next() == Some(simple_name) && !IGNORED_ANNOTATIONS.contains(&name.as_str())
-    })
+fn imports_other_type(simple: &str, context: &Context) -> bool {
+    single_type_imports(context.ancestors[0])
+        .any(|name| simple_name(&name) == simple && !IGNORED_ANNOTATIONS.contains(&name.as_str()))
 }

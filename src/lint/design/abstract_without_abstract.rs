@@ -1,24 +1,26 @@
 //! A011: an abstract class without abstract methods, which neither extends a class nor implements an interface (PMD
 //! AbstractClassWithoutAbstractMethod). A class that has supertypes may leave their abstract methods unimplemented.
 
-use tree_sitter::Node;
-
-use super::{has_keyword, members};
+use super::has_keyword;
+use crate::ast::{ClassKind, K, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(class: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    if !has_keyword(class, text, "abstract")
-        || class.child_by_field_name("superclass").is_some()
-        || class.child_by_field_name("interfaces").is_some()
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Class(class) = &tree.kind else { return };
+    if class.kind != ClassKind::Class
+        || class.extends.is_some()
+        || !class.implements.is_empty()
+        || !has_keyword(&class.mods, class.name_pos, "abstract", context)
     {
         return;
     }
-    let Some(body) = class.child_by_field_name("body") else { return };
-    let has_abstract_method =
-        members(&body).iter().any(|m| m.kind() == "method_declaration" && has_keyword(m, text, "abstract"));
+    let has_abstract_method = class.members.iter().any(|m| {
+        matches!(&m.kind, K::Method(method)
+            if method.ret.is_some() && has_keyword(&method.mods, method.name_pos, "abstract", context))
+    });
     if !has_abstract_method {
-        let name = class.child_by_field_name("name").unwrap_or(*class);
         let message = "This abstract class does not have any abstract methods";
-        diagnostics.push(Diagnostic::new(Rule::AbstractWithoutAbstract, name.start_byte(), message));
+        diagnostics.push(Diagnostic::new(Rule::AbstractWithoutAbstract, class.name_pos, message));
     }
 }
