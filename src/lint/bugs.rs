@@ -11,6 +11,7 @@ mod equals_avoid_null;
 mod equals_hash_code;
 mod equals_null;
 pub(super) mod fall_through;
+mod fall_through_cst;
 mod finally_exit;
 mod identical_operands;
 mod illegal_catch;
@@ -30,6 +31,7 @@ pub(super) mod unused_local_variable;
 mod unused_private_member;
 
 mod print_stack_trace;
+mod shared_a;
 mod suspicious_octal_escape;
 mod unused_parameter;
 
@@ -42,44 +44,26 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::EmptyCatch, &[Tag::Try], empty_catch::check),
     (Rule::StringLiteralEquality, &[Tag::Binary], string_literal_equality::check),
     (Rule::UnusedLocalVariable, &[Tag::Vars, Tag::ForEach, Tag::BindingPattern], unused_local_variable::check),
+    (Rule::EqualsHashCode, &[Tag::Class, Tag::NewClass], equals_hash_code::check),
+    (Rule::CovariantEquals, &[Tag::Class, Tag::NewClass], covariant_equals::check),
+    (Rule::FallThrough, &[Tag::Switch, Tag::SwitchExpr], fall_through::check),
+    (Rule::MissingSwitchDefault, &[Tag::Switch], missing_switch_default::check),
+    (Rule::DefaultComesLast, &[Tag::Switch, Tag::SwitchExpr], default_comes_last::check),
+    (Rule::EqualsAvoidNull, &[Tag::MethodInvocation], equals_avoid_null::check),
+    (Rule::EqualsNull, &[Tag::MethodInvocation], equals_null::check),
+    (Rule::FinallyExit, &[Tag::Try], finally_exit::check),
+    (Rule::IdenticalOperands, &[Tag::Binary, Tag::Assign], identical_operands::check),
+    (Rule::InnerAssignment, &[Tag::Assign], inner_assignment::check),
+    (Rule::ParameterAssignment, &[Tag::Method, Tag::Lambda], parameter_assignment::check),
+    (Rule::ModifiedControlVariable, &[Tag::For, Tag::ForEach], modified_control_variable::check),
+    (Rule::JumbledIncrementer, &[Tag::For], jumbled_incrementer::check),
 ];
 
 pub(super) const CHECKS: &[(Rule, &[&str], Check)] = &[
-    (Rule::EqualsHashCode, &["class_body", "enum_body_declarations"], equals_hash_code::check),
-    (Rule::CovariantEquals, &["class_body", "enum_body_declarations"], covariant_equals::check),
-    (Rule::FallThrough, &["switch_block"], fall_through::check),
-    (Rule::EqualsNull, &["method_invocation"], equals_null::check),
-    (Rule::FinallyExit, &["finally_clause"], finally_exit::check),
-    (Rule::IdenticalOperands, &["binary_expression", "assignment_expression"], identical_operands::check),
-    (Rule::ModifiedControlVariable, &["for_statement", "enhanced_for_statement"], modified_control_variable::check),
-    (Rule::JumbledIncrementer, &["for_statement"], jumbled_incrementer::check),
     (Rule::NullCheck, &["binary_expression"], null_check::check),
     (Rule::BigDecimalDouble, &["object_creation_expression"], big_decimal_double::check),
     (Rule::DoubleCheckedLocking, &["if_statement"], double_checked_locking::check),
     (Rule::UnusedPrivateMember, &["program"], unused_private_member::check),
-    (
-        Rule::MissingSwitchDefault,
-        &[
-            "block",
-            "constructor_body",
-            "switch_block_statement_group",
-            "if_statement",
-            "while_statement",
-            "do_statement",
-            "for_statement",
-            "enhanced_for_statement",
-            "labeled_statement",
-        ],
-        missing_switch_default::check,
-    ),
-    (Rule::DefaultComesLast, &["switch_block"], default_comes_last::check),
-    (Rule::EqualsAvoidNull, &["method_invocation"], equals_avoid_null::check),
-    (Rule::InnerAssignment, &["assignment_expression"], inner_assignment::check),
-    (
-        Rule::ParameterAssignment,
-        &["method_declaration", "constructor_declaration", "lambda_expression"],
-        parameter_assignment::check,
-    ),
     (Rule::LostCause, &["throw_statement"], lost_cause::check),
     (Rule::MissingSuperCall, &["method_declaration"], missing_super_call::check),
     (Rule::DoubleBraceInitialization, &["object_creation_expression"], double_brace_initialization::check),

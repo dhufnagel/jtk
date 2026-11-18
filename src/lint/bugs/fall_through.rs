@@ -5,10 +5,11 @@
 //! As in Checkstyle, a loop counts as ending the `case` if its body ends in `return` or `throw`, or if it is an
 //! infinite loop without `break`.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{NESTED_CODE, descendants, is_comment, named_children, source, strip_parentheses};
+use crate::ast::{Case, CaseKind, K, Tree};
+use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Rule};
+
+pub(crate) use super::fall_through_cst::ends_group;
 
 /// Checkstyle's default relief pattern `falls?[ -]?thr(u|ough)`, spelled out.
 const RELIEF_COMMENTS: &[&str] = &[
@@ -26,46 +27,31 @@ const RELIEF_COMMENTS: &[&str] = &[
     "falls-through",
 ];
 
-/// Statements whose `break` does not leave the enclosing `case`.
-const BREAK_TARGETS: &[&str] = &[
-    "for_statement",
-    "enhanced_for_statement",
-    "while_statement",
-    "do_statement",
-    "switch_block",
-    "lambda_expression",
-    "class_body",
-];
-
-/// How a statement can leave the `case` (the byte range of its statement group).
+/// How a statement can leave the `case`.
 #[derive(Clone, Copy)]
 struct Exits {
     by_break: bool,
     by_continue: bool,
-    case: (usize, usize),
 }
 
-pub fn check(switch_block: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let groups: Vec<Node> =
-        named_children(switch_block).into_iter().filter(|c| c.kind() == "switch_block_statement_group").collect();
-    for pair in groups.windows(2) {
-        let [group, next] = pair else { continue };
-        let Some(last) = statements(group).pop() else { continue };
-        let next_case = first_label_start(next);
-        if !ends_group(&last, group, text) && !is_relieved(&text[last.end_byte()..next_case]) {
-            diagnostics.push(Diagnostic::new(Rule::FallThrough, next_case, "Fall through from the previous case"));
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let (K::Switch { cases, .. } | K::SwitchExpr { cases, .. }) = &tree.kind else { return };
+    for pair in cases.windows(2) {
+        let [case, next] = pair else { continue };
+        if case.kind != CaseKind::Statement {
+            return;
+        }
+        let Some(last) = last_statement(&case.stmts) else { continue };
+        if !ends_case(last, context.text) && !is_relieved(&context.text[last.end..next.start]) {
+            diagnostics.push(Diagnostic::new(Rule::FallThrough, next.start, "Fall through from the previous case"));
         }
     }
 }
 
-/// Whether control cannot reach the end of a statement of a `case` group, so that the group does not fall through:
-/// a `break` or `continue` leaves the group unless it targets a statement within it.
-pub(crate) fn ends_group(statement: &Node, group: &Node, text: &str) -> bool {
-    terminates(
-        statement,
-        text,
-        Exits { by_break: true, by_continue: true, case: (group.start_byte(), group.end_byte()) },
-    )
+/// Whether control cannot reach the end of a statement of a `case` (`case ...:`), so that the case does not fall
+/// through: a `break` or `continue` leaves the case unless it targets a statement within it.
+pub(crate) fn ends_case(statement: &Tree, text: &str) -> bool {
+    terminates(statement, text, Exits { by_break: true, by_continue: true }, &mut Vec::new(), 0)
 }
 
 /// Whether the last non-empty line between the case's code and the next `case` has a relief comment.
@@ -74,117 +60,106 @@ fn is_relieved(between: &str) -> bool {
     RELIEF_COMMENTS.iter().any(|c| last_line.contains(c))
 }
 
-fn first_label_start(group: &Node) -> usize {
-    let label = named_children(group).into_iter().find(|c| c.kind() == "switch_label");
-    label.map_or(group.start_byte(), |l| l.start_byte())
+/// The last statement that is not empty (`;`).
+fn last_statement(statements: &[Tree]) -> Option<&Tree> {
+    statements.iter().rfind(|s| !matches!(s.kind, K::Empty))
 }
 
-fn statements<'t>(node: &Node<'t>) -> Vec<Node<'t>> {
-    named_children(node).into_iter().filter(|c| c.kind() != "switch_label" && !is_comment(c)).collect()
-}
-
-/// Whether control cannot reach the end of the statement.
-fn terminates(statement: &Node, text: &str, exits: Exits) -> bool {
-    let field = |name| statement.child_by_field_name(name);
-    match statement.kind() {
-        "return_statement" | "throw_statement" | "yield_statement" => true,
-        "break_statement" => jumps_out(statement, text, exits.by_break, exits),
-        "continue_statement" => jumps_out(statement, text, exits.by_continue, exits),
-        "block" => statements(statement).last().is_some_and(|s| terminates(s, text, exits)),
-        "if_statement" => match (field("consequence"), field("alternative")) {
-            (Some(consequence), Some(alternative)) => {
-                terminates(&consequence, text, exits) && terminates(&alternative, text, exits)
-            }
+/// Whether control cannot reach the end of the statement. `labels` are those of the labeled statements between the
+/// case and the statement, the last `direct` of which label the statement itself.
+fn terminates<'t>(statement: &'t Tree, text: &str, exits: Exits, labels: &mut Vec<&'t str>, direct: usize) -> bool {
+    match &statement.kind {
+        K::Return(_) | K::Throw(_) | K::Yield(_) => true,
+        K::Break(label) => jumps_out(label.as_deref(), exits.by_break, labels),
+        K::Continue(label) => jumps_out(label.as_deref(), exits.by_continue, labels),
+        K::Block { stmts, .. } => last_statement(stmts).is_some_and(|s| terminates(s, text, exits, labels, 0)),
+        K::If { then, else_: Some(else_), .. } => {
+            terminates(then, text, exits, labels, 0) && terminates(else_, text, exits, labels, 0)
+        }
+        K::Try { block, catches, finally, .. } => {
+            finally.as_deref().is_some_and(|f| terminates(f, text, exits, labels, 0))
+                || terminates(block, text, exits, labels, 0)
+                    && catches.iter().all(|c| terminates(&c.block, text, exits, labels, 0))
+        }
+        K::Synchronized { block, .. } => terminates(block, text, exits, labels, 0),
+        K::Labeled { label, body } => {
+            labels.push(label);
+            let terminates = terminates(body, text, exits, labels, direct + 1);
+            labels.pop();
+            terminates
+        }
+        K::While { body, .. } | K::DoWhile { body, .. } | K::For { body, .. } | K::ForEach { body, .. } => {
+            let is_infinite = match &statement.kind {
+                K::For { cond, .. } => cond.as_deref().is_none_or(|c| is_true(c, text)),
+                K::While { cond, .. } | K::DoWhile { cond, .. } => is_true(cond, text),
+                _ => false,
+            };
+            let has_break = has_break(body, &labels[labels.len() - direct..]);
+            (is_infinite && !has_break)
+                || terminates(body, text, Exits { by_break: false, by_continue: false }, labels, 0)
+        }
+        K::Switch { cases, .. } => switch_terminates(cases, text, exits, labels),
+        K::ExprStmt(expression) => match &expression.kind {
+            K::SwitchExpr { cases, .. } => switch_terminates(cases, text, exits, labels),
             _ => false,
         },
-        "try_statement" | "try_with_resources_statement" => try_terminates(statement, text, exits),
-        "synchronized_statement" => field("body").is_some_and(|b| terminates(&b, text, exits)),
-        "labeled_statement" => named_children(statement).last().is_some_and(|s| terminates(s, text, exits)),
-        "while_statement" | "do_statement" | "for_statement" | "enhanced_for_statement" => {
-            loop_terminates(statement, text, exits)
-        }
-        "switch_expression" => switch_terminates(statement, text, exits),
-        "expression_statement" => named_children(statement)
-            .first()
-            .is_some_and(|e| e.kind() == "switch_expression" && switch_terminates(e, text, exits)),
         _ => false,
     }
 }
 
 /// Whether a `break` or `continue` leaves the case: an unlabeled one if `unlabeled_leaves`, a labeled one unless it
 /// targets a statement within the case.
-fn jumps_out(statement: &Node, text: &str, unlabeled_leaves: bool, exits: Exits) -> bool {
-    let Some(label) = named_children(statement).into_iter().find(|c| c.kind() == "identifier") else {
-        return unlabeled_leaves;
-    };
-    let target = std::iter::successors(statement.parent(), |n| n.parent())
-        .filter(|n| n.kind() == "labeled_statement")
-        .find(|l| named_children(l).first().is_some_and(|name| source(name, text) == source(&label, text)));
-    let (case_start, case_end) = exits.case;
-    target.is_none_or(|t| t.start_byte() < case_start || t.end_byte() > case_end)
+fn jumps_out(label: Option<&str>, unlabeled_leaves: bool, labels: &[&str]) -> bool {
+    label.map_or(unlabeled_leaves, |l| !labels.contains(&l))
 }
 
-fn try_terminates(statement: &Node, text: &str, exits: Exits) -> bool {
-    let children = named_children(statement);
-    let finally = children.iter().find(|c| c.kind() == "finally_clause");
-    if finally.and_then(|f| named_children(f).pop()).is_some_and(|block| terminates(&block, text, exits)) {
-        return true;
+/// Whether a `break` leaves the loop with the body: an unlabeled one outside nested loops and switches, or one naming
+/// one of the loop's labels.
+fn has_break(body: &Tree, labels: &[&str]) -> bool {
+    match &body.kind {
+        K::Break(label) => label.as_deref().is_none_or(|l| labels.contains(&l)),
+        _ => any_child(body, &mut |child| breaks(child, labels, is_switch(body))),
     }
-    let body_terminates = statement.child_by_field_name("body").is_some_and(|b| terminates(&b, text, exits));
-    let mut catch_bodies =
-        children.iter().filter(|c| c.kind() == "catch_clause").filter_map(|c| c.child_by_field_name("body"));
-    body_terminates && catch_bodies.all(|b| terminates(&b, text, exits))
 }
 
-fn loop_terminates(statement: &Node, text: &str, exits: Exits) -> bool {
-    let Some(body) = statement.child_by_field_name("body") else { return false };
-    let is_infinite = match statement.kind() {
-        "for_statement" => statement.child_by_field_name("condition").is_none_or(|c| is_true(&c, text)),
-        "enhanced_for_statement" => false,
-        _ => statement.child_by_field_name("condition").is_some_and(|c| is_true(&c, text)),
-    };
-    let has_break = has_break(statement, &body, text);
-    let body_exits = Exits { by_break: false, by_continue: false, ..exits };
-    (is_infinite && !has_break) || terminates(&body, text, body_exits)
-}
-
-/// Whether a `break` leaves the loop: an unlabeled one outside nested loops and switches, or one naming the loop's
-/// label.
-fn has_break<'t>(statement: &Node<'t>, body: &Node<'t>, text: &str) -> bool {
-    let labels: Vec<&str> = std::iter::successors(statement.parent(), |n| n.parent())
-        .take_while(|n| n.kind() == "labeled_statement")
-        .filter_map(|l| named_children(&l).first().map(|name| source(name, text)))
-        .collect();
-    let label_of = |b: &Node| named_children(b).first().map(|l| source(l, text));
-    let breaks_outside = |opaque: &[&str]| -> Vec<Node<'t>> {
-        let mut breaks = descendants(body, "break_statement", opaque);
-        if body.kind() == "break_statement" {
-            breaks.push(*body);
+/// Whether the tree is or contains a `break` that leaves the loop: `in_target` if a nested loop or switch catches
+/// unlabeled ones.
+fn breaks(tree: &Tree, labels: &[&str], in_target: bool) -> bool {
+    match &tree.kind {
+        K::Break(None) => !in_target,
+        K::Break(Some(label)) => labels.contains(&label.as_str()),
+        K::Lambda { .. } | K::Class(_) => false,
+        K::NewClass { outer, args, .. } => outer.iter().map(|o| &**o).chain(args).any(|t| breaks(t, labels, in_target)),
+        _ => {
+            let is_loop = matches!(tree.kind, K::For { .. } | K::ForEach { .. } | K::While { .. } | K::DoWhile { .. });
+            let in_target = in_target || is_loop || is_switch(tree);
+            any_child(tree, &mut |child| breaks(child, labels, in_target))
         }
-        breaks
-    };
-    let unlabeled = breaks_outside(BREAK_TARGETS).iter().any(|b| label_of(b).is_none());
-    let to_loop = breaks_outside(NESTED_CODE).iter().any(|b| label_of(b).is_some_and(|l| labels.contains(&l)));
-    unlabeled || to_loop
+    }
+}
+
+fn is_switch(tree: &Tree) -> bool {
+    matches!(tree.kind, K::Switch { .. } | K::SwitchExpr { .. })
+}
+
+fn any_child<'t>(tree: &'t Tree, predicate: &mut impl FnMut(&'t Tree) -> bool) -> bool {
+    let mut found = false;
+    tree.for_each_child(&mut |child| found = found || predicate(child));
+    found
 }
 
 /// A nested `switch` ends the case if it has a `default` and all its cases end it (a `break` only leaves the nested
 /// switch).
-fn switch_terminates(switch: &Node, text: &str, exits: Exits) -> bool {
-    let Some(block) = switch.child_by_field_name("body") else { return false };
-    let groups: Vec<Node> = named_children(&block).into_iter().filter(|g| !is_comment(g)).collect();
-    let has_default = groups
-        .iter()
-        .flat_map(named_children)
-        .any(|c| c.kind() == "switch_label" && source(&c, text).starts_with("default"));
+fn switch_terminates<'t>(cases: &'t [Case], text: &str, exits: Exits, labels: &mut Vec<&'t str>) -> bool {
     let nested = Exits { by_break: false, ..exits };
-    has_default
-        && groups.iter().all(|g| match g.kind() {
-            "switch_block_statement_group" => statements(g).last().is_some_and(|s| terminates(s, text, nested)),
-            _ => false,
+    cases.iter().any(|c| c.is_default)
+        && cases.iter().all(|c| {
+            c.kind == CaseKind::Statement
+                && last_statement(&c.stmts).is_some_and(|s| terminates(s, text, nested, labels, 0))
         })
 }
 
-fn is_true(condition: &Node, text: &str) -> bool {
-    source(&strip_parentheses(condition), text) == "true"
+fn is_true(condition: &Tree, text: &str) -> bool {
+    let condition = strip_parens(condition);
+    &text[condition.start..condition.end] == "true"
 }

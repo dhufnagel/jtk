@@ -3,33 +3,34 @@
 //! Unsafe fix: `x == null` (Eclipse's quick fix). It changes the behaviour where `x` is null (no exception) or its
 //! `equals` breaks the contract.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{has_comment, named_children, source};
+use crate::ast::{K, LitKind, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
 
-pub fn check(invocation: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let is_equals = invocation.child_by_field_name("name").is_some_and(|n| source(&n, text) == "equals");
-    let arguments = invocation.child_by_field_name("arguments").map(|a| named_children(&a)).unwrap_or_default();
-    let is_null_argument = matches!(arguments.as_slice(), [argument] if argument.kind() == "null_literal");
-    let Some(object) = invocation.child_by_field_name("object") else { return };
-    if !is_equals || !is_null_argument {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::MethodInvocation { select, type_args, args } = &tree.kind else { return };
+    let K::MemberSelect { expr: object, name } = &select.kind else { return };
+    let tokens = context.tokens();
+    // A comment among the arguments counted as one.
+    let is_null_argument = matches!(args.as_slice(), [argument] if matches!(argument.kind, K::Literal(LitKind::Null)))
+        && !tokens.has_comment(select.end..tree.end);
+    if name != "equals" || !is_null_argument {
         return;
     }
-    let diagnostic = Diagnostic::new(Rule::EqualsNull, invocation.start_byte(), "equals(null) instead of == null");
-    let parent = invocation.parent();
+    let diagnostic = Diagnostic::new(Rule::EqualsNull, tree.start, "equals(null) instead of == null");
+    let parent = context.parent();
     // A comparison is no statement.
-    let fixable = object.kind() != "super"
-        && !has_comment(invocation)
-        && invocation.child_by_field_name("type_arguments").is_none()
-        && parent.is_some_and(|p| p.kind() != "expression_statement");
+    let fixable = !matches!(&object.kind, K::Ident(name) if name == "super")
+        && !tokens.has_comment(tree.start..tree.end)
+        && type_args.is_empty()
+        && parent.is_some_and(|p| !matches!(p.kind, K::ExprStmt(_)));
     diagnostics.push(if fixable {
         // The call binds tighter than `==`: keep the comparison together with parentheses unless the context is
         // known not to need them.
-        let comparison = format!("{} == null", source(&object, text));
-        let needs_parentheses = parent.is_none_or(|p| !is_low_precedence_context(&p, invocation, text));
+        let comparison = format!("{} == null", context.source(object));
+        let needs_parentheses = parent.is_none_or(|p| !is_low_precedence_context(p, tree, context));
         let replacement = if needs_parentheses { format!("({comparison})") } else { comparison };
-        diagnostic.with_unsafe_fix(vec![Edit::new(invocation.byte_range(), replacement)])
+        diagnostic.with_unsafe_fix(vec![Edit::new(tree.start..tree.end, replacement)])
     } else {
         diagnostic
     });
@@ -37,20 +38,24 @@ pub fn check(invocation: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
 
 /// Whether an expression can be replaced by a comparison without parentheses in this parent: where it is a whole
 /// expression, or an operand of `&&`, `||` or `?:` (conditional operators bind less tightly than `==`).
-fn is_low_precedence_context(parent: &Node, child: &Node, text: &str) -> bool {
-    match parent.kind() {
-        "parenthesized_expression"
-        | "argument_list"
-        | "variable_declarator"
-        | "return_statement"
-        | "lambda_expression"
-        | "yield_statement"
-        | "assert_statement" => true,
-        "assignment_expression" => parent.child_by_field_name("right") == Some(*child),
-        "binary_expression" => {
-            matches!(parent.child_by_field_name("operator").map(|o| source(&o, text)), Some("&&" | "||"))
+fn is_low_precedence_context(parent: &Tree, child: &Tree, context: &Context) -> bool {
+    let is = |t: &Tree| std::ptr::eq(t, child);
+    match &parent.kind {
+        K::Parens(_)
+        | K::MethodInvocation { .. }
+        | K::Vars(_)
+        | K::Return(_)
+        | K::Lambda { .. }
+        | K::Yield(_)
+        | K::Assert { .. } => true,
+        K::NewClass { args, .. } => args.iter().any(is),
+        K::Class(class) => class.enum_constants.iter().flat_map(|c| &c.args).any(is),
+        // An annotation's `k = v` is no assignment.
+        K::Assign { rhs, .. } => {
+            is(rhs) && !context.grandparent().is_some_and(|g| matches!(g.kind, K::Annotation { .. }))
         }
-        "ternary_expression" => parent.child_by_field_name("condition") == Some(*child),
+        K::Binary { op, .. } => matches!(op.as_str(), "&&" | "||"),
+        K::Conditional { cond, .. } => is(cond),
         _ => false,
     }
 }

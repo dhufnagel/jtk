@@ -1,18 +1,19 @@
 //! B010: `return` or `throw` in a `finally` block (PMD ReturnFromFinallyBlock, DoNotThrowExceptionInFinally):
 //! discards the exception or result of the `try` block.
 
-use tree_sitter::Node;
-
-use crate::lint::syntax::{NESTED_CODE, for_each_descendant};
+use super::shared_a::for_each_in_same_code;
+use crate::ast::{K, Tree};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
-pub fn check(finally: &Node, _text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    for_each_descendant(finally, NESTED_CODE, |node| {
-        let message = match node.kind() {
-            "return_statement" => "return in finally discards the exception or result of the try block",
-            "throw_statement" => "throw in finally discards the exception or result of the try block",
+pub fn check(tree: &Tree, _context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::Try { finally: Some(finally), .. } = &tree.kind else { return };
+    for_each_in_same_code(finally, &mut |statement| {
+        let message = match statement.kind {
+            K::Return(_) => "return in finally discards the exception or result of the try block",
+            K::Throw(_) => "throw in finally discards the exception or result of the try block",
             _ => return,
         };
-        diagnostics.push(Diagnostic::new(Rule::FinallyExit, node.start_byte(), message));
+        diagnostics.push(Diagnostic::new(Rule::FinallyExit, statement.start, message));
     });
 }

@@ -12,90 +12,89 @@
 //! Unsafe fix: swaps receiver and argument (`"literal".equals(s)`). Where `s` is null, the call gives `false` instead of
 //! throwing, and an assignment in the argument now happens before `s` is read.
 
-use std::collections::HashMap;
-
-use tree_sitter::Node;
-
-use crate::lint::syntax::{has_comment, is_comment, named_children, operator, source, strip_parentheses};
+use super::shared_a::is_varargs;
+use crate::ast::{ClassKind, K, LitKind, Tree, VarDecl};
+use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
 
-/// The variables declared in a scope by name: the offset of the declaration and whether its type is `String`.
-type Variables<'a> = HashMap<&'a str, (usize, bool)>;
-
-pub fn check(call: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let method = call.child_by_field_name("name").map_or("", |n| source(&n, text));
-    if !matches!(method, "equals" | "equalsIgnoreCase") {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let K::MethodInvocation { select, type_args, args } = &tree.kind else { return };
+    let K::MemberSelect { expr: object, name: method } = &select.kind else { return };
+    if !matches!(method.as_str(), "equals" | "equalsIgnoreCase") {
         return;
     }
-    let Some(arguments) = call.child_by_field_name("arguments") else { return };
-    let argument_nodes: Vec<Node> = named_children(&arguments).into_iter().filter(|a| !is_comment(a)).collect();
-    let ([argument], Some(object)) = (argument_nodes.as_slice(), call.child_by_field_name("object")) else { return };
-    // The cheap test first: resolving the receiver walks up the tree.
-    if is_literal_argument(argument, text) && is_string_variable(call, &object, text) {
+    let tokens = context.tokens();
+    let [argument] = args.as_slice() else { return };
+    // The cheap test first: resolving the receiver walks the enclosing scopes.
+    if is_literal_argument(argument) && is_string_variable(object, context) {
         let message = format!("String literal expressions should be on the left side of an {method} comparison");
-        let diagnostic = Diagnostic::new(Rule::EqualsAvoidNull, arguments.start_byte(), message);
-        diagnostics.push(if has_comment(call) || call.child_by_field_name("type_arguments").is_some() {
+        let parenthesis = tokens.next(select.end).map_or(select.end, |p| p.start);
+        let diagnostic = Diagnostic::new(Rule::EqualsAvoidNull, parenthesis, message);
+        diagnostics.push(if tokens.has_comment(tree.start..tree.end) || !type_args.is_empty() {
             diagnostic
         } else {
-            let receiver = match argument.kind() {
-                "string_literal" | "parenthesized_expression" => source(argument, text).to_string(),
-                _ => format!("({})", source(argument, text)),
+            let receiver = match argument.kind {
+                K::Literal(LitKind::String) | K::Parens(_) => context.source(argument).to_string(),
+                _ => format!("({})", context.source(argument)),
             };
-            let replacement = format!("{receiver}.{method}({})", source(&object, text));
-            diagnostic.with_unsafe_fix(vec![Edit::new(call.byte_range(), replacement)])
+            let replacement = format!("{receiver}.{method}({})", context.source(object));
+            diagnostic.with_unsafe_fix(vec![Edit::new(tree.start..tree.end, replacement)])
         });
     }
 }
 
 /// Checkstyle's test for an argument that cannot be null.
-fn is_literal_argument(argument: &Node, text: &str) -> bool {
-    let mut argument = strip_parentheses(argument);
-    if argument.kind() == "assignment_expression" && operator(&argument, text) == "=" {
+fn is_literal_argument(argument: &Tree) -> bool {
+    let mut argument = strip_parens(argument);
+    if let K::Assign { op, rhs, .. } = &argument.kind
+        && op == "="
+    {
         // Checkstyle does not look into parentheses around the assigned value.
-        match argument.child_by_field_name("right") {
-            Some(right) => argument = right,
-            None => return false,
-        }
+        argument = rhs;
     }
-    match argument.kind() {
-        "string_literal" => true,
-        "binary_expression" if operator(&argument, text) == "+" => ["left", "right"]
-            .iter()
-            .filter_map(|field| argument.child_by_field_name(field))
-            .any(|operand| matches!(strip_parentheses(&operand).kind(), "string_literal" | "identifier")),
+    match &argument.kind {
+        K::Literal(LitKind::String) => true,
+        K::Binary { op, lhs, rhs } if op == "+" => [lhs, rhs].iter().any(|operand| match &strip_parens(operand).kind {
+            K::Literal(LitKind::String) => true,
+            K::Ident(name) => name != "this" && name != "super",
+            _ => false,
+        }),
         _ => false,
     }
 }
 
+/// A scope of Checkstyle's: a tree or one of the parts of trees that are no trees of their own.
+#[derive(Clone, Copy)]
+enum Scope<'t> {
+    Tree(&'t Tree),
+    Catch(&'t VarDecl),
+    EnumConstant(&'t crate::ast::EnumConstant),
+}
+
 /// Whether the receiver is a name, `this.name` or `Class.name` declared with the type `String`.
-fn is_string_variable(call: &Node, object: &Node, text: &str) -> bool {
-    let (name, qualifier) = match object.kind() {
-        "identifier" => (*object, None),
-        "field_access" => match (object.child_by_field_name("field"), object.child_by_field_name("object")) {
-            (Some(field), Some(qualifier)) if matches!(qualifier.kind(), "this" | "identifier") => {
-                (field, Some(qualifier))
-            }
+fn is_string_variable(object: &Tree, context: &Context) -> bool {
+    let (name, qualifier) = match &object.kind {
+        K::Ident(name) if name != "this" && name != "super" => (name, None),
+        K::MemberSelect { expr, name } => match &expr.kind {
+            K::Ident(qualifier) if qualifier != "super" => (name, Some(qualifier.as_str())),
             _ => return false,
         },
         _ => return false,
     };
-    let name = source(&name, text);
-    // The enclosing scopes, innermost first: calls that get here are rare enough to afford `Node::parent`.
-    let scopes = std::iter::successors(call.parent(), |n| n.parent()).filter_map(|n| scope(&n, text).map(|c| (n, c)));
-    for (scope, class_name) in scopes {
-        let declared = || variables(&scope, text).get(name).copied();
+    for scope in scopes(&context.ancestors) {
+        let class_name = class_name(scope);
+        let declared = || declaration(scope, name, context.text);
         match qualifier {
             None => {
                 if let Some((offset, is_string)) = declared()
-                    && (class_name.is_some() || offset < object.start_byte())
+                    && (class_name.is_some() || offset < object.start)
                 {
                     return is_string;
                 }
             }
             // `this.name` refers to the innermost class, `Class.name` to the enclosing class of that name.
             Some(qualifier) => {
-                let is_class = qualifier.kind() == "this" || class_name == Some(source(&qualifier, text));
-                if class_name.is_some() && is_class {
+                if class_name.is_some_and(|c| qualifier == "this" || c == qualifier) {
                     return declared().is_some_and(|(_, is_string)| is_string);
                 }
             }
@@ -104,106 +103,115 @@ fn is_string_variable(call: &Node, object: &Node, text: &str) -> bool {
     false
 }
 
-/// Whether the node is a scope for fields, with the name of a class, enum or record, whose fields are
-/// visible anywhere in it.
-fn scope<'a>(node: &Node, text: &'a str) -> Option<Option<&'a str>> {
-    match node.kind() {
-        "class_declaration" | "enum_declaration" | "record_declaration" => {
-            Some(Some(node.child_by_field_name("name").map_or("", |n| source(&n, text))))
+/// The scopes enclosing the checked tree, innermost first.
+fn scopes<'t>(ancestors: &[&'t Tree]) -> impl Iterator<Item = Scope<'t>> {
+    (0..ancestors.len()).rev().flat_map(move |index| {
+        let tree = ancestors[index];
+        let child = ancestors.get(index + 1).copied();
+        let is = move |t: &Tree| child.is_some_and(|c| std::ptr::eq(c, t));
+        // The parts between the tree and the child come first.
+        let part = match &tree.kind {
+            K::Try { catches, .. } => catches.iter().find(|c| is(&c.block)).map(|c| Scope::Catch(&c.param)),
+            K::Class(class) => class
+                .enum_constants
+                .iter()
+                .find(|c| c.args.iter().chain(c.body.iter().flatten()).any(is))
+                .map(Scope::EnumConstant),
+            _ => None,
+        };
+        let own = is_scope(tree).then_some(Scope::Tree(tree));
+        part.into_iter().chain(own)
+    })
+}
+
+/// The name of a class, enum or record, whose fields are visible anywhere in it.
+fn class_name<'t>(scope: Scope<'t>) -> Option<&'t str> {
+    match scope {
+        Scope::Tree(Tree { kind: K::Class(class), .. })
+            if matches!(class.kind, ClassKind::Class | ClassKind::Enum | ClassKind::Record) =>
+        {
+            Some(&class.name)
         }
-        "object_creation_expression" if named_children(node).iter().any(|c| c.kind() == "class_body") => Some(None),
-        "interface_body"
-        | "annotation_type_body"
-        | "enum_constant"
-        | "method_declaration"
-        | "constructor_declaration"
-        | "compact_constructor_declaration"
-        | "lambda_expression"
-        | "for_statement"
-        | "enhanced_for_statement"
-        | "catch_clause"
-        | "try_statement"
-        | "try_with_resources_statement"
-        | "switch_expression"
-        | "block"
-        | "constructor_body" => Some(None),
         _ => None,
     }
 }
 
-/// The variables declared in the scope: by the node itself and by its descendants outside nested scopes. A later
-/// declaration of a name replaces an earlier one, as in Checkstyle.
-fn variables<'a>(scope_node: &Node, text: &'a str) -> Variables<'a> {
-    let mut variables = Variables::new();
-    declare(scope_node, text, &mut variables);
-    let mut cursor = scope_node.walk();
-    if !cursor.goto_first_child() {
-        return variables;
-    }
-    loop {
-        let node = cursor.node();
-        let enter = node.is_named() && scope(&node, text).is_none() && {
-            declare(&node, text, &mut variables);
-            true
-        };
-        if enter && cursor.goto_first_child() {
-            continue;
-        }
-        while !cursor.goto_next_sibling() {
-            if !cursor.goto_parent() || cursor.node() == *scope_node {
-                return variables;
-            }
-        }
-    }
+fn is_scope(tree: &Tree) -> bool {
+    matches!(
+        tree.kind,
+        K::Class(_)
+            | K::Method(_)
+            | K::Lambda { .. }
+            | K::For { .. }
+            | K::ForEach { .. }
+            | K::Try { .. }
+            | K::Switch { .. }
+            | K::SwitchExpr { .. }
+            | K::Block { .. }
+            | K::NewClass { body: Some(_), .. }
+    )
 }
 
-/// Adds the variables the node declares.
-fn declare<'a>(node: &Node, text: &'a str, variables: &mut Variables<'a>) {
-    let mut add = |name: Option<Node>, type_node: Option<Node>| {
-        if let Some(name) = name {
-            let is_string = type_node.is_some_and(|t| is_string_type(&t, text));
-            variables.insert(source(&name, text), (name.start_byte(), is_string));
+/// The last declaration of the name in the scope, outside nested scopes: the offset of its name and whether its type
+/// is `String`. A later declaration of a name replaces an earlier one, as in Checkstyle.
+fn declaration(scope: Scope, name: &str, text: &str) -> Option<(usize, bool)> {
+    let mut found = None;
+    let mut declare = |var: &VarDecl, is_string: bool| {
+        if var.name == name {
+            found = Some((var.name_pos, is_string));
         }
     };
-    let type_node = || node.child_by_field_name("type");
-    match node.kind() {
-        "field_declaration" | "local_variable_declaration" | "constant_declaration" => {
-            for declarator in node.children_by_field_name("declarator", &mut node.walk()) {
-                add(declarator.child_by_field_name("name"), type_node());
+    match scope {
+        // The type of a catch parameter is never a plain `String` to Checkstyle.
+        Scope::Catch(parameter) => declare(parameter, false),
+        Scope::EnumConstant(constant) => {
+            for tree in constant.args.iter().chain(constant.body.iter().flatten()) {
+                declarations(tree, text, &mut declare);
             }
         }
-        "formal_parameter" | "enhanced_for_statement" | "resource" | "catch_formal_parameter" => {
-            add(node.child_by_field_name("name"), type_node())
-        }
-        "instanceof_expression" => add(node.child_by_field_name("name"), node.child_by_field_name("right")),
-        "spread_parameter" => {
-            let declarator = named_children(node).into_iter().find(|c| c.kind() == "variable_declarator");
-            add(declarator.and_then(|d| d.child_by_field_name("name")), type_node());
-        }
+        Scope::Tree(tree) => match &tree.kind {
+            K::Class(class) => {
+                class.record_components.iter().for_each(|v| declare(v, is_string_type(v)));
+                class.members.iter().for_each(|m| declarations(m, text, &mut declare));
+            }
+            K::Try { resources, .. } => resources.iter().for_each(|r| declarations(r, text, &mut declare)),
+            _ => {
+                declare_own(tree, text, &mut declare);
+                tree.for_each_child(&mut |child| declarations(child, text, &mut declare));
+            }
+        },
+    }
+    found
+}
+
+/// Declares the variables of the tree and its descendants outside nested scopes.
+fn declarations(tree: &Tree, text: &str, declare: &mut impl FnMut(&VarDecl, bool)) {
+    if is_scope(tree) {
+        return;
+    }
+    declare_own(tree, text, declare);
+    tree.for_each_child(&mut |child| declarations(child, text, declare));
+}
+
+/// Declares the variables the tree itself declares.
+fn declare_own(tree: &Tree, text: &str, declare: &mut impl FnMut(&VarDecl, bool)) {
+    match &tree.kind {
+        K::Vars(vars) => vars.iter().for_each(|v| declare(v, is_string_type(v))),
+        K::Var(var) | K::ForEach { var, .. } | K::BindingPattern { var } => declare(var, is_string_type(var)),
+        K::Method(method) => method.params.iter().for_each(|p| declare(p, !is_varargs(p, text) && is_string_type(p))),
         // Parameters without types hide outer variables (a single one without parentheses does not in Checkstyle).
-        "inferred_parameters" => {
-            for name in named_children(node).into_iter().filter(|c| c.kind() == "identifier") {
-                add(Some(name), None);
-            }
-        }
-        "type_pattern" | "record_pattern_component" => {
-            let children = named_children(node);
-            let name = children.iter().rfind(|c| c.kind() == "identifier").copied();
-            let pattern_type = children.iter().find(|c| !matches!(c.kind(), "modifiers" | "identifier")).copied();
-            add(name, pattern_type);
+        K::Lambda { params, .. } if text[tree.start..].starts_with('(') => {
+            params.iter().for_each(|p| declare(p, !is_varargs(p, text) && is_string_type(p)))
         }
         _ => {}
     }
 }
 
 /// Whether the declared type is `String` (Checkstyle compares the simple type name, ignoring array dimensions).
-fn is_string_type(type_node: &Node, text: &str) -> bool {
-    let mut node = *type_node;
-    while node.kind() == "array_type" {
-        match node.child_by_field_name("element") {
-            Some(element) => node = element,
-            None => return false,
-        }
+fn is_string_type(var: &VarDecl) -> bool {
+    let Some(mut ty) = var.ty.as_deref() else { return false };
+    while let K::ArrayType { elem, .. } = &ty.kind {
+        ty = elem;
     }
-    node.kind() == "type_identifier" && source(&node, text) == "String"
+    matches!(&ty.kind, K::Ident(name) if name == "String")
 }

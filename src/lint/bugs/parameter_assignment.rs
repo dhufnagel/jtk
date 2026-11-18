@@ -4,61 +4,47 @@
 //! As in Checkstyle, the parameters of the innermost method, constructor or lambda count, also in the initializers of
 //! local and anonymous classes in it; the components of a record are not parameters of its compact constructor.
 
-use std::collections::HashSet;
-
-use tree_sitter::Node;
-
-use crate::lint::syntax::{for_each_descendant, named_children, source};
+use super::shared_a::modified_name;
+use crate::ast::{K, Tree, VarDecl};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
 
-/// The scopes with their own parameters, checked separately.
-const SCOPES: &[&str] = &["method_declaration", "constructor_declaration", "lambda_expression"];
-
-pub fn check(scope: &Node, text: &str, diagnostics: &mut Vec<Diagnostic>) {
-    let Some(parameters) = scope.child_by_field_name("parameters") else { return };
-    let names = parameter_names(&parameters, text);
-    let Some(body) = scope.child_by_field_name("body") else { return };
-    if names.is_empty() {
+pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    let (parameters, body): (&[VarDecl], &Tree) = match &tree.kind {
+        K::Method(method) => match &method.body {
+            Some(body) if !method.compact_ctor => (&method.params, body),
+            _ => return,
+        },
+        K::Lambda { params, body } => (params, body),
+        _ => return,
+    };
+    if parameters.is_empty() {
         return;
     }
-    let mut check_node = |node: &Node| {
-        let (target, operator) = match node.kind() {
-            "assignment_expression" => (node.child_by_field_name("left"), node.child_by_field_name("operator")),
-            "update_expression" => {
-                let children: Vec<Node> = node.children(&mut node.walk()).collect();
-                (
-                    children.iter().find(|c| c.is_named()).copied(),
-                    children.iter().find(|c| matches!(c.kind(), "++" | "--")).copied(),
-                )
-            }
-            _ => return,
-        };
-        let (Some(target), Some(operator)) = (target, operator) else { return };
-        if target.kind() == "identifier" && names.contains(source(&target, text)) {
-            let message = format!("Assignment of parameter '{}' is not allowed", source(&target, text));
-            diagnostics.push(Diagnostic::new(Rule::ParameterAssignment, operator.start_byte(), message));
+    let mut check_tree = |tree: &Tree| {
+        let Some(name) = modified_name(tree) else { return };
+        if !parameters.iter().any(|p| p.name == name) {
+            return;
         }
-    };
-    check_node(&body);
-    for_each_descendant(&body, SCOPES, check_node);
-}
-
-fn parameter_names<'a>(parameters: &Node, text: &'a str) -> HashSet<&'a str> {
-    if parameters.kind() == "identifier" {
-        return HashSet::from([source(parameters, text)]);
-    }
-    let mut names = HashSet::new();
-    for parameter in named_children(parameters) {
-        let name = match parameter.kind() {
-            "identifier" => Some(parameter),
-            "formal_parameter" => parameter.child_by_field_name("name"),
-            "spread_parameter" => named_children(&parameter)
-                .into_iter()
-                .find(|c| c.kind() == "variable_declarator")
-                .and_then(|d| d.child_by_field_name("name")),
+        let offset = match &tree.kind {
+            K::Assign { lhs, rhs, .. } => context.tokens().in_range(lhs.end..rhs.start).next(),
+            K::Unary { postfix: true, .. } => context.tokens().previous(tree.end),
             _ => None,
         };
-        names.extend(name.map(|n| source(&n, text)));
-    }
-    names
+        let message = format!("Assignment of parameter '{name}' is not allowed");
+        diagnostics.push(Diagnostic::new(Rule::ParameterAssignment, offset.map_or(tree.start, |o| o.start), message));
+    };
+    check_tree(body);
+    for_each_in_scope(body, &mut check_tree);
+}
+
+/// Calls `f` on each descendant outside nested methods, constructors, lambdas and annotations.
+fn for_each_in_scope<'t>(tree: &'t Tree, f: &mut impl FnMut(&'t Tree)) {
+    tree.for_each_child(&mut |child| match child.kind {
+        K::Method(_) | K::Lambda { .. } | K::Annotation { .. } => {}
+        _ => {
+            f(child);
+            for_each_in_scope(child, f);
+        }
+    });
 }
