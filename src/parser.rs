@@ -1083,12 +1083,14 @@ impl<'s> Parser<'s> {
     }
 
     /// Wraps an annotated type like the converter: the annotations of an array type belong to its element type.
-    fn annotate(&self, start: usize, annotations: Vec<Tree>, base: Tree) -> Tree {
+    fn annotate(&self, start: usize, annotations: Vec<Tree>, mut base: Tree) -> Tree {
         if annotations.is_empty() {
             return base;
         }
         let end = self.prev_end;
-        if let K::ArrayType { elem, dims } = base.kind {
+        if matches!(base.kind, K::ArrayType { .. })
+            && let K::ArrayType { elem, dims } = base.take_kind()
+        {
             let elem = Tree::new(start, elem.end, K::Annotated { annotations, base: elem });
             return Tree::new(start, end, K::ArrayType { elem: Box::new(elem), dims });
         }
@@ -1196,9 +1198,9 @@ impl<'s> Parser<'s> {
     }
 
     /// Wraps `ty` with dimensions that end at the last consumed token.
-    fn add_dims(&self, ty: Tree, groups: Vec<Vec<Tree>>) -> Tree {
+    fn add_dims(&self, mut ty: Tree, groups: Vec<Vec<Tree>>) -> Tree {
         let (start, end) = (ty.start, self.prev_end);
-        match ty.kind {
+        match ty.take_kind() {
             K::ArrayType { elem, dims: mut existing } => {
                 existing.extend(groups);
                 Tree::new(start, end, K::ArrayType { elem, dims: existing })
@@ -1354,7 +1356,8 @@ impl<'s> Parser<'s> {
                     if !ctor_call {
                         return self.fail();
                     }
-                    let e = Tree::new(e.start, self.prev_end, e.kind);
+                    let mut e = e;
+                    let e = Tree::new(e.start, self.prev_end, e.take_kind());
                     return Ok(self.tree(start, K::ExprStmt(Box::new(e))));
                 }
                 K::ExprStmt(Box::new(e))
@@ -2075,7 +2078,7 @@ impl<'s> Parser<'s> {
                 dim_annotations.push(annos);
             }
             let init = if self.peek() == "{" {
-                match self.array_initializer()?.kind {
+                match self.array_initializer()?.take_kind() {
                     K::NewArray { init, .. } => init,
                     _ => None,
                 }

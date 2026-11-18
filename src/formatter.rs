@@ -172,8 +172,8 @@ fn apply_replacements(text: &str, replacements: &[Replacement]) -> String {
 
 /// Deeply nested input (e.g. generated data files with thousands of concatenated strings) needs more stack than the
 /// main thread's default, so formatting runs on a thread with a large (lazily committed) stack: the current one if it
-/// was started by [`spawn_with_large_stack`], else a new one.
-fn with_large_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+/// was started by [`spawn_with_large_stack`], else a new one. Linting does the same.
+pub(crate) fn with_large_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     if HAS_LARGE_STACK.get() {
         return f();
     }

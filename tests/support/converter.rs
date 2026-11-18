@@ -594,7 +594,8 @@ impl<'s> Converter<'s> {
         }
         let start = ty.start;
         let end = dims.end_byte();
-        match ty.kind {
+        let mut ty = ty;
+        match ty.take_kind() {
             K::ArrayType { elem, dims: mut existing } => {
                 existing.extend(groups);
                 Ok(Tree::new(start, end, K::ArrayType { elem, dims: existing }))
@@ -1047,8 +1048,10 @@ impl<'s> Converter<'s> {
             "annotated_type" => {
                 let ch = named_children(n);
                 let annotations = ch[..ch.len() - 1].iter().map(|a| self.annotation(a)).collect::<R<Vec<_>>>()?;
-                let base = self.ty(&ch[ch.len() - 1])?;
-                if let K::ArrayType { elem, dims } = base.kind {
+                let mut base = self.ty(&ch[ch.len() - 1])?;
+                if matches!(base.kind, K::ArrayType { .. })
+                    && let K::ArrayType { elem, dims } = base.take_kind()
+                {
                     // `@A int[]`: the annotations belong to the element type.
                     let start = start_of(n);
                     let elem = Tree::new(start, elem.end, K::Annotated { annotations, base: elem });
@@ -1260,7 +1263,7 @@ impl<'s> Converter<'s> {
                     if !pending.is_empty() {
                         let start = pending[0].start;
                         let mut annotations = std::mem::take(&mut pending);
-                        ty = match ty.kind {
+                        ty = match ty.take_kind() {
                             K::Annotated { annotations: inner, base } => {
                                 annotations.extend(inner);
                                 Tree::new(start, ty.end, K::Annotated { annotations, base })
@@ -1354,7 +1357,7 @@ impl<'s> Converter<'s> {
                     }
                 }
                 let init = match child_by_field(n, "value") {
-                    Some(v) => match self.array_initializer(&v)?.kind {
+                    Some(v) => match self.array_initializer(&v)?.take_kind() {
                         K::NewArray { init, .. } => init,
                         _ => None,
                     },
@@ -1482,14 +1485,18 @@ fn binary_precedence(op: &str) -> i32 {
 
 /// Restores operator precedence after a misparsed cast was turned into an addition/subtraction: tree-sitter nests
 /// such a cast as a tight operand, so it can end up as the operand of a stronger-binding operator.
-fn rebalance(t: Tree) -> Tree {
-    let Tree { start, end, kind: K::Binary { op, lhs, rhs } } = t else { return t };
+fn rebalance(mut t: Tree) -> Tree {
+    if !matches!(t.kind, K::Binary { .. }) {
+        return t;
+    }
+    let (start, end) = (t.start, t.end);
+    let K::Binary { op, mut lhs, mut rhs } = t.take_kind() else { unreachable!() };
     let prec = binary_precedence(&op);
     if let K::Binary { op: lop, .. } = &lhs.kind
         && binary_precedence(lop) < prec
     {
         // (a lop b) op c  =>  a lop (b op c)
-        let K::Binary { op: lop, lhs: a, rhs: b } = lhs.kind else { unreachable!() };
+        let K::Binary { op: lop, lhs: a, rhs: b } = lhs.take_kind() else { unreachable!() };
         let inner = rebalance(Tree::new(b.start, end, K::Binary { op, lhs: b, rhs }));
         return Tree::new(start, end, K::Binary { op: lop, lhs: a, rhs: Box::new(inner) });
     }
@@ -1497,7 +1504,7 @@ fn rebalance(t: Tree) -> Tree {
         && binary_precedence(rop) <= prec
     {
         // a op (b rop c)  =>  (a op b) rop c
-        let K::Binary { op: rop, lhs: b, rhs: c } = rhs.kind else { unreachable!() };
+        let K::Binary { op: rop, lhs: b, rhs: c } = rhs.take_kind() else { unreachable!() };
         let inner = rebalance(Tree::new(start, b.end, K::Binary { op, lhs, rhs: b }));
         return Tree::new(start, end, K::Binary { op: rop, lhs: Box::new(inner), rhs: c });
     }

@@ -703,3 +703,104 @@ impl Tree {
         }
     }
 }
+
+/// Drops trees without recursion through the kinds that nest deeply in real code (chains of operators, calls and
+/// `else if`, nested blocks): the default, recursive drop overflows the stack on a chain of thousands of `+`.
+impl Drop for Tree {
+    fn drop(&mut self) {
+        if !has_nesting_children(&self.kind) {
+            return;
+        }
+        let mut stack = Vec::new();
+        take_nesting_children(&mut self.kind, &mut stack);
+        while let Some(mut tree) = stack.pop() {
+            take_nesting_children(&mut tree.kind, &mut stack);
+        }
+    }
+}
+
+impl Tree {
+    /// Takes the kind out of the tree, leaving an empty statement.
+    pub fn take_kind(&mut self) -> K {
+        std::mem::replace(&mut self.kind, K::Empty)
+    }
+}
+
+fn has_nesting_children(kind: &K) -> bool {
+    match kind {
+        K::Block { stmts, .. } => !stmts.is_empty(),
+        K::Return(expr) => expr.is_some(),
+        _ => matches!(
+            kind,
+            K::Binary { .. }
+                | K::Assign { .. }
+                | K::ArrayAccess { .. }
+                | K::Unary { .. }
+                | K::Parens(_)
+                | K::ExprStmt(_)
+                | K::MemberSelect { .. }
+                | K::Cast { .. }
+                | K::InstanceOf { .. }
+                | K::Throw(_)
+                | K::Yield(_)
+                | K::Lambda { .. }
+                | K::Conditional { .. }
+                | K::If { .. }
+                | K::MethodInvocation { .. }
+                | K::NewClass { .. }
+        ),
+    }
+}
+
+/// Moves the subtrees of the kinds that nest deeply onto `stack`, leaving empty trees in their place.
+fn take_nesting_children(kind: &mut K, stack: &mut Vec<Tree>) {
+    fn take(tree: &mut B, stack: &mut Vec<Tree>) {
+        if !matches!(tree.kind, K::Empty) {
+            stack.push(std::mem::replace(&mut **tree, Tree::new(0, 0, K::Empty)));
+        }
+    }
+    match kind {
+        K::Binary { lhs, rhs, .. } | K::Assign { lhs, rhs, .. } => {
+            take(lhs, stack);
+            take(rhs, stack);
+        }
+        K::ArrayAccess { expr, index } => {
+            take(expr, stack);
+            take(index, stack);
+        }
+        K::Unary { expr, .. }
+        | K::Parens(expr)
+        | K::ExprStmt(expr)
+        | K::MemberSelect { expr, .. }
+        | K::Cast { expr, .. }
+        | K::InstanceOf { expr, .. }
+        | K::Return(Some(expr))
+        | K::Throw(expr)
+        | K::Yield(expr)
+        | K::Lambda { body: expr, .. } => take(expr, stack),
+        K::Conditional { cond, then, else_ } => {
+            take(cond, stack);
+            take(then, stack);
+            take(else_, stack);
+        }
+        K::If { cond, then, else_ } => {
+            take(cond, stack);
+            take(then, stack);
+            if let Some(else_) = else_ {
+                take(else_, stack);
+            }
+        }
+        K::MethodInvocation { select, args, .. } => {
+            take(select, stack);
+            stack.append(args);
+        }
+        K::NewClass { outer, args, .. } => {
+            if let Some(outer) = outer {
+                take(outer, stack);
+            }
+            stack.append(args);
+        }
+        K::Block { stmts, .. } => stack.append(stmts),
+        _ => {}
+    }
+}

@@ -325,6 +325,15 @@ pub fn lint(text: &str, selection: &Selection) -> Result<Vec<Diagnostic>, Format
 /// Like [`lint`] with the given rule parameters, and also checks the rules about the file's path (if known), such
 /// as whether its name matches the type it declares.
 pub fn lint_file(text: &str, path: Option<&Path>, settings: &Settings) -> Result<Vec<Diagnostic>, FormatError> {
+    // Deeply nested code needs more stack than callers such as the language server's threads have.
+    crate::formatter::with_large_stack(|| lint_on_current_thread(text, path, settings))
+}
+
+fn lint_on_current_thread(
+    text: &str,
+    path: Option<&Path>,
+    settings: &Settings,
+) -> Result<Vec<Diagnostic>, FormatError> {
     let unit = crate::parser::parse_cached(text)
         .map_err(|error| FormatError::at_offset(text, error.offset, "syntax error"))?;
     let mut diagnostics = Vec::new();
