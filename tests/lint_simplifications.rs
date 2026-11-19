@@ -146,7 +146,7 @@ fn multiple_declarations() {
         n;
 }
 ";
-    assert_eq!(violations("S013", source), ["2:5 S013", "3:5 S013", "5:9 S013", "6:9 S013", "11:5 S013"]);
+    assert_eq!(violations("S013", source), ["2:5 S013", "5:9 S013"]);
     assert_eq!(messages("S013", "class C { int a, b; }"), ["Each variable declaration must be in its own statement"]);
 }
 
@@ -386,7 +386,7 @@ fn expression_lambda() {
     }
 }
 ";
-    assert_eq!(violations("S021", source), ["3:13 S021", "4:14 S021"]);
+    assert_eq!(violations("S021", source), ["3:13 S021", "4:14 S021", "5:13 S021"]);
 }
 
 #[test]
@@ -399,6 +399,9 @@ fn expression_lambda_fix() {
         g(() -> { run(); });
         g(x -> { return x.trim(); });
         g(x -> { return x; /* same */ });
+        g(x -> {
+            return x + 2;
+        });
     }
 }
 ";
@@ -412,6 +415,7 @@ fn expression_lambda_fix() {
         g(() -> { run(); });
         g(x -> { return x.trim(); });
         g(x -> { return x; /* same */ });
+        g(x -> x + 2);
     }
 }
 "

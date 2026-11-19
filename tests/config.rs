@@ -41,34 +41,33 @@ fn jtk(dir: &Dir, args: &[&str]) -> (i32, String, String) {
     (code, out, String::from_utf8(err).unwrap())
 }
 
-const LONG_LINE: &str =
-    "class A {\n    String s = \"a string that makes this line clearly longer than eighty characters\";\n}\n";
+const LONG_LIST: &str = "class A {\n    void f(int a, int b, int c, int d, int e, int f, int g, int h) {}\n}\n";
 
 #[test]
 fn selects_rules_and_sets_their_parameters() {
-    let config = "[lint]\nselect = [\"C020\"]\n";
-    let d = Dir::new("parameters", &[("jtk.toml", config), ("src/A.java", LONG_LINE)]);
+    let config = "[lint]\nselect = [\"C010\"]\n";
+    let d = Dir::new("parameters", &[("jtk.toml", config), ("src/A.java", LONG_LIST)]);
     let (code, out, _) = jtk(&d, &["lint", &d.path("src")]);
-    assert_eq!((code, out.as_str()), (1, "src/A.java:2:1: C020 Line is longer than 80 characters (found 85).\n"));
+    assert_eq!((code, out.as_str()), (1, "src/A.java:2:10: C010 More than 7 parameters (found 8).\n"));
 
-    std::fs::write(d.path("jtk.toml"), format!("{config}[lint.options.C020]\nmax = 120\n")).unwrap();
+    std::fs::write(d.path("jtk.toml"), format!("{config}[lint.options.C010]\nmax = 8\n")).unwrap();
     assert_eq!(jtk(&d, &["lint", &d.path("src")]), (0, String::new(), String::new()));
     // The command line replaces the selection, but keeps the parameters.
-    assert_eq!(jtk(&d, &["lint", "--select", "C02", &d.path("src")]).0, 0);
+    assert_eq!(jtk(&d, &["lint", "--select", "C01", &d.path("src")]).0, 0);
 }
 
 #[test]
 fn excludes_files_and_ignores_rules_per_file() {
-    let config = "exclude = [\"src/generated\"]\n\n[lint]\nselect = [\"C020\"]\n\n[lint.per-file-ignores]\n\"**/*Test.java\" = [\"C\"]\n";
+    let config = "exclude = [\"src/generated\"]\n\n[lint]\nselect = [\"C010\"]\n\n[lint.per-file-ignores]\n\"**/*Test.java\" = [\"C\"]\n";
     let files = [
         ("jtk.toml", config),
-        ("src/A.java", LONG_LINE),
-        ("src/ATest.java", LONG_LINE),
-        ("src/generated/G.java", LONG_LINE),
+        ("src/A.java", LONG_LIST),
+        ("src/ATest.java", LONG_LIST),
+        ("src/generated/G.java", LONG_LIST),
     ];
     let d = Dir::new("exclude", &files);
     let (_, out, _) = jtk(&d, &["lint", &d.path("")]);
-    assert_eq!(out, "src/A.java:2:1: C020 Line is longer than 80 characters (found 85).\n");
+    assert_eq!(out, "src/A.java:2:10: C010 More than 7 parameters (found 8).\n");
     // A file given explicitly is checked even if excluded.
     assert_eq!(jtk(&d, &["lint", &d.path("src/generated/G.java")]).0, 1);
 }
@@ -76,14 +75,14 @@ fn excludes_files_and_ignores_rules_per_file() {
 #[test]
 fn nearest_configuration_applies() {
     let files = [
-        ("jtk.toml", "[lint]\nselect = [\"C020\"]\n"),
-        ("legacy/jtk.toml", "[lint]\nselect = [\"C020\"]\n\n[lint.options.C020]\nmax = 100\n"),
-        ("A.java", LONG_LINE),
-        ("legacy/B.java", LONG_LINE),
+        ("jtk.toml", "[lint]\nselect = [\"C010\"]\n"),
+        ("legacy/jtk.toml", "[lint]\nselect = [\"C010\"]\n\n[lint.options.C010]\nmax = 8\n"),
+        ("A.java", LONG_LIST),
+        ("legacy/B.java", LONG_LIST),
     ];
     let d = Dir::new("nearest", &files);
     let (_, out, _) = jtk(&d, &["lint", &d.path("")]);
-    assert_eq!(out, "A.java:2:1: C020 Line is longer than 80 characters (found 85).\n");
+    assert_eq!(out, "A.java:2:10: C010 More than 7 parameters (found 8).\n");
     let (_, out, _) = jtk(&d, &["lint", "--config", &d.path("jtk.toml"), &d.path("")]);
     assert_eq!(out.lines().count(), 2);
 }
@@ -104,7 +103,7 @@ fn configuration_errors() {
     let (code, _, err) = jtk(&d, &["lint", &d.path("A.java")]);
     assert_eq!((code, err), (2, format!("{}: no rule matches 'X1'\n", d.path("jtk.toml"))));
 
-    std::fs::write(d.path("jtk.toml"), "[lint.options.C020]\nmaximum = 100\n").unwrap();
+    std::fs::write(d.path("jtk.toml"), "[lint.options.C010]\nmaximum = 8\n").unwrap();
     let (code, _, err) = jtk(&d, &["lint", &d.path("A.java")]);
     assert_eq!(code, 2);
     assert!(err.contains("unknown field `maximum`, expected `max`"), "{err}");

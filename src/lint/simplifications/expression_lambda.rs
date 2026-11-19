@@ -1,4 +1,4 @@
-//! S021: a block lambda on one line whose only statement is an expression or returns one, `x -> { return e; }`
+//! S021: a block lambda whose only statement is an expression or returns one, `x -> { return e; }`
 //! instead of `x -> e` (Checkstyle ExpressionOverBlockLambda).
 //!
 //! The fix replaces `{ return e; }` by `e`. It is skipped for expression statements (`() -> { run(); }`): as an
@@ -14,16 +14,13 @@ pub fn check(lambda: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>
     let K::Lambda { params, body } = &lambda.kind else { return };
     let K::Block { stmts, .. } = &body.kind else { return };
     let Some(arrow) = context.tokens().previous(body.start) else { return };
-    if context.text[arrow.start..body.end].contains('\n') {
-        return;
-    }
     let [statement] = &stmts[..] else { return };
     let expression = match &statement.kind {
         K::ExprStmt(_) => None,
         K::Return(Some(expression)) => Some(expression),
         _ => return,
     };
-    let message = "Use an expression lambda instead of a single-line block lambda";
+    let message = "Use an expression lambda instead of a block lambda";
     let mut diagnostic = Diagnostic::new(Rule::ExpressionLambda, arrow.start, message);
     let fixable = expression.filter(|e| {
         !context.tokens().has_comment(body.start..body.end)

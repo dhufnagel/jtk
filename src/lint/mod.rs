@@ -180,7 +180,6 @@ rules! {
     NestedIfDepth "C014" ["NestedIfDepth"] ["AvoidDeeplyNestedIfStmts"],
     NestedForDepth "C015" ["NestedForDepth"] [],
     NestedTryDepth "C016" ["NestedTryDepth"] [],
-    LineLength "C020" ["LineLength"] [],
     ThrowsCount "C021" ["ThrowsCount"] [],
     CognitiveComplexity "C022" [] ["CognitiveComplexity"],
 }

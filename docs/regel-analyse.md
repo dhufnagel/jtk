@@ -137,7 +137,7 @@ EC = Eclipse-Save-Action.
 | S010 | Überflüssiges `return` am Ende | PMD UnnecessaryReturn | ✅ | 1 |
 | S011 | Überflüssiges `super()` | CS AvoidNoArgumentSuperConstructorCall, EC | ✅ | 1 |
 | S012 | Explizite Default-Initialisierung (`= null`, `= 0`) | CS ExplicitInitialization | ✅ | 1 |
-| S013 | Eine Deklaration pro Zeile | CS MultipleVariableDeclarations, PMD OneDeclarationPerLine | ✅ | 1 |
+| S013 | Eine Variable pro Deklaration (mehrere Deklarationen auf einer Zeile trennt fmt) | CS MultipleVariableDeclarations, PMD OneDeclarationPerLine | ✅ | 1 |
 | S014 | `int a[]` → `int[] a` | CS ArrayTypeStyle | ✅ | 1 |
 | S015 | `1l` → `1L`, Hex-/Präfix-Schreibweise | CS UpperEll, HexLiteralCase, NumericalPrefixesInfixesSuffixesCharacterCase, EP LongLiteralLowerCaseSuffix | ✅ | 1 |
 | S016 | Trailing Comma in Arrays/Enums (oder Verbot) | CS ArrayTrailingComma / NoArrayTrailingComma / NoEnumTrailingComma | ✅ | 1 |
@@ -199,11 +199,10 @@ EC = Eclipse-Save-Action.
 ### C: Komplexität und Größe (Stufe 3, kein Fix, Schwellwerte wie in Checkstyle, in `jtk.toml` einstellbar)
 C001 CyclomaticComplexity, C003 BooleanExpressionComplexity, C004 JavaNCSS, C005 ExecutableStatementCount,
 C006 MethodLength, C007 FileLength, C008 LambdaBodyLength, C009 AnonInnerLength, C010 ParameterNumber,
-C011 RecordComponentNumber, C013 OuterTypeNumber, C014–C016 NestedIf/For/TryDepth, C020 LineLength, C021 ThrowsCount,
+C011 RecordComponentNumber, C013 OuterTypeNumber, C014–C016 NestedIf/For/TryDepth, C021 ThrowsCount,
 C022 CognitiveComplexity (PMD). Nicht umgesetzt: C002 NPathComplexity, C012 MethodCount, C017 ReturnCount,
-C018 ClassFanOutComplexity, C019 ClassDataAbstractionCoupling.
-**LineLength** meldet, was fmt nicht umbrechen kann (Kommentare, URLs, lange Bezeichner). Standard ist Checkstyles 80,
-damit der Abgleich mit Checkstyle aufgeht; Projekte mit fmt setzen in `jtk.toml` `C020 = { max = 120 }`.
+C018 ClassFanOutComplexity, C019 ClassDataAbstractionCoupling. Entfernt: C020 LineLength, weil fmt die Zeilenlänge
+bestimmt (jtk geht davon aus, dass immer formatiert und gelintet wird).
 
 ### D: Javadoc-Inhalt (Stufe 3; das Layout übernimmt die optionale Javadoc-Formatierung in fmt)
 MissingJavadocType/Method, JavadocMethod (`@param`/`@return`/`@throws` passend zur Signatur, EP InvalidParam/InvalidThrows),

@@ -124,7 +124,6 @@ C013 OuterTypeNumber
 C014 NestedIfDepth
 C015 NestedForDepth
 C016 NestedTryDepth
-C020 LineLength
 C021 ThrowsCount
 '
 
@@ -133,7 +132,7 @@ if [ -n "$prefixes" ]; then
 fi
 
 # Checks that Checkstyle runs on the file text rather than in the TreeWalker.
-checker_modules=' FileLength LineLength '
+checker_modules=' FileLength '
 
 module_config() {
   echo "$mapping" | while read -r code module properties; do

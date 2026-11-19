@@ -47,8 +47,6 @@ pub struct RuleOptions {
     pub nested_for_depth: Max,
     #[serde(rename = "C016")]
     pub nested_try_depth: Max,
-    #[serde(rename = "C020")]
-    pub line_length: Max,
     #[serde(rename = "C021")]
     pub throws_count: Max,
     #[serde(rename = "C022")]
@@ -79,7 +77,6 @@ impl Default for RuleOptions {
             nested_if_depth: Max { max: 1 },
             nested_for_depth: Max { max: 1 },
             nested_try_depth: Max { max: 1 },
-            line_length: Max { max: 80 },
             throws_count: Max { max: 4 },
             cognitive_complexity: CognitiveComplexity::default(),
         }

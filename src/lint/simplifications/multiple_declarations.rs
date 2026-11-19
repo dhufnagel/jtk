@@ -1,9 +1,9 @@
-//! S013: several variables in one declaration, or several declarations on one line (Checkstyle
-//! MultipleVariableDeclarations, PMD OneDeclarationPerLine). Declarations in a `for` initializer are allowed.
+//! S013: several variables in one declaration (Checkstyle MultipleVariableDeclarations, PMD OneDeclarationPerLine).
+//! Declarations in a `for` initializer are allowed. Several declarations on one line are left to the formatter,
+//! which puts each statement on its own line.
 //!
 //! The fix splits a declaration into one per variable, each with the modifiers, annotations and type; array
-//! dimensions after a name move to its type. Declarations with comments inside are not split. Separate declarations
-//! on one line are left to the formatter.
+//! dimensions after a name move to its type. Declarations with comments inside are not split.
 
 use crate::ast::{K, Tree, VarDecl};
 use crate::lint::tree::Context;
@@ -30,8 +30,7 @@ pub fn check(container: &Tree, context: &Context, diagnostics: &mut Vec<Diagnost
 
 /// Checks the declarations among the statements or members.
 fn check_list(children: &[Tree], context: &Context, diagnostics: &mut Vec<Diagnostic>) {
-    let mut children = children.iter().filter(|c| !matches!(c.kind, K::Empty)).peekable();
-    while let Some(declaration) = children.next() {
+    for declaration in children {
         let K::Vars(declarators) = &declaration.kind else { continue };
         if declarators.len() > 1 {
             let message = "Each variable declaration must be in its own statement";
@@ -40,13 +39,6 @@ fn check_list(children: &[Tree], context: &Context, diagnostics: &mut Vec<Diagno
                 diagnostic = diagnostic.with_fix(vec![Edit::new(declaration.start..declaration.end, split)]);
             }
             diagnostics.push(diagnostic);
-        }
-        let next_on_same_line = children.peek().is_some_and(|next| {
-            matches!(next.kind, K::Vars(_)) && !context.text[declaration.end..next.start].contains('\n')
-        });
-        if next_on_same_line {
-            let message = "Only one variable definition per line allowed";
-            diagnostics.push(Diagnostic::new(Rule::MultipleDeclarations, declaration.start, message));
         }
     }
 }

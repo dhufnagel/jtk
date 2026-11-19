@@ -199,21 +199,6 @@ fn nested_for_and_try_depth() {
 }
 
 #[test]
-fn line_length() {
-    let long = "x".repeat(81);
-    let source = format!(
-        "import {long};\nclass A {{\n    // {}\n    // {}\n\t\t\t\t\t\t\t\t\t\t// x\n}}\n",
-        "x".repeat(73),
-        "x".repeat(74)
-    );
-    assert_eq!(violations("C020", &source), ["4:1 C020", "5:1 C020"]);
-    assert_eq!(
-        messages("C020", &source),
-        ["Line is longer than 80 characters (found 81).", "Line is longer than 80 characters (found 84)."]
-    );
-}
-
-#[test]
 fn throws_count() {
     let source = "class A {
     void f() throws A, B, C, D {}

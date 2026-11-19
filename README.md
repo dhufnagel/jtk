@@ -84,12 +84,12 @@ The other rules are the remaining Checkstyle checks, with Checkstyle's default p
 |---|---|
 | `I001`–`I005` | star, illegal and static imports, unnecessarily qualified types |
 | `B005`–`B034` | missing `default`, inner assignments, parameter assignment, illegal catch/throws, `clone`/`finalize`, ... |
-| `S009`–`S021` | annotation order, `super()`, explicit initialization, one declaration per line, array style, literal case, empty and nested blocks, block lambdas (most with fixes) |
+| `S009`–`S021` | annotation order, `super()`, explicit initialization, one variable per declaration, array style, literal case, empty and nested blocks, block lambdas (most with fixes) |
 | `M002`–`M016` | switch expressions, `when` guards, unnamed variables (`_`), `final` parameters and locals, `@Deprecated`, `permits` |
 | `M006`, `M007`, `M009`, `M010`, `M012` | the remaining Eclipse save actions: `var`, enhanced `for`, text blocks, multi-catch, `final` fields |
 | `N013`, `N014` | abbreviations in names, illegal identifiers |
 | `A001`–`A017` | design: utility classes, final classes, visibility, overload order, magic numbers, file names, ... |
-| `C001`–`C022` | complexity and size: cyclomatic and cognitive complexity, lengths, counts, nesting depths, line length |
+| `C001`–`C022` | complexity and size: cyclomatic and cognitive complexity, lengths, counts, nesting depths |
 
 Each module in `src/lint/` documents its rule. `scripts/compare-with-checkstyle.sh` compares the rules with their
 Checkstyle equivalents; on the Checkstyle test inputs, they report 99% of Checkstyle's violations on the same line.
@@ -129,14 +129,13 @@ format-javadoc = false
 
 [lint]
 select = ["ALL"]                   # as --select, which replaces it
-extend-select = ["C020"]           # --extend-select adds to it
+extend-select = ["C022"]           # --extend-select adds to it
 ignore = ["A015"]                  # --ignore adds to it
 
 [lint.per-file-ignores]
 "src/test/**" = ["B022", "C"]
 
 [lint.options]                     # rule parameters, named after Checkstyle's (PMD's for C022)
-C020 = { max = 120 }
 C001 = { max = 15 }
 ```
 
@@ -152,7 +151,7 @@ Rules with parameters, with their defaults:
 | `A015` | `ignore-numbers = [-1, 0, 1, 2]` |
 | `C004` | `method-maximum = 50`, `class-maximum = 1500`, `record-maximum = 150`, `file-maximum = 2000` |
 | `C022` | `report-level = 15` |
-| other `C` rules | `max`: C001 10, C003 3, C005 30, C006 150, C007 2000, C008 10, C009 20, C010 7, C011 8, C013 1, C014–C016 1, C020 80, C021 4 |
+| other `C` rules | `max`: C001 10, C003 3, C005 30, C006 150, C007 2000, C008 10, C009 20, C010 7, C011 8, C013 1, C014–C016 1, C021 4 |
 
 Violations are suppressed by `// jtk:ignore` or `// jtk:ignore[S001]` on their line, and by
 `@SuppressWarnings("jtk:S001")` on an enclosing declaration. Existing Checkstyle and PMD suppressions apply to the

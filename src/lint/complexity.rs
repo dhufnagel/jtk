@@ -38,7 +38,6 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], TreeCheck)] = &[
     (Rule::NestedIfDepth, &[Tag::CompilationUnit], shared::<{ Shared::NestedIf as u8 }>),
     (Rule::NestedForDepth, &[Tag::CompilationUnit], shared::<{ Shared::NestedFor as u8 }>),
     (Rule::NestedTryDepth, &[Tag::CompilationUnit], shared::<{ Shared::NestedTry as u8 }>),
-    (Rule::LineLength, &[Tag::CompilationUnit], file_text::check_line_length),
     (Rule::ThrowsCount, &[Tag::Method], counts::check_throws),
     (Rule::CognitiveComplexity, &[Tag::Method], cognitive::check),
 ];
