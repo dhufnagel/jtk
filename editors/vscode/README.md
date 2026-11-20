@@ -57,7 +57,7 @@ npm run package   # builds jtk for this platform and creates jtk-<version>.vsix
 To try the package, install it with **Extensions: Install from VSIX…** in VS Code, or:
 
 ```sh
-code --install-extension jtk-0.4.0.vsix
+code --install-extension jtk-0.5.0.vsix
 ```
 
 The package contains the jtk binary for the platform it was built on only. With VS Code's remote development (SSH,
