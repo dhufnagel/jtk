@@ -5,15 +5,15 @@
 //!   the compiler infers it. As in Checkstyle, types are compared by simple name with all classes, interfaces, enums
 //!   and records of the file. The fix removes the clause.
 
-use crate::lint::tree::{Context, for_each_descendant, has_modifier};
+use crate::lint::tree::{Context, for_each_descendant};
 use crate::lint::{Diagnostic, Edit, Rule};
-use jtk_parser::ast::{ClassKind, K, Tree};
+use jtk_parser::ast::{ClassKind, K, Modifier, Tree};
 
-pub fn missing_permits(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+pub fn missing_permits(tree: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Class(class) = &tree.kind else { return };
     if matches!(class.kind, ClassKind::Class | ClassKind::Interface)
         && class.permits.is_empty()
-        && has_modifier(&class.mods, context.text, context.tokens(), "sealed")
+        && class.mods.has(Modifier::Sealed)
     {
         let message = "Sealed classes or interfaces should explicitly declare permitted subclasses";
         diagnostics.push(Diagnostic::new(Rule::SealedPermits, tree.start, message));

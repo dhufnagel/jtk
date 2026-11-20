@@ -8,9 +8,9 @@
 //! single `return` of the field, which jtk does not: the unsafe publication does not depend on them.
 
 use super::shared_b::for_each_in_same_code;
-use crate::lint::tree::{Context, has_modifier, strip_parens};
+use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassKind, K, LitKind, Tree};
+use jtk_parser::ast::{ClassKind, K, LitKind, Modifier, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::If { then, .. } = &tree.kind else { return };
@@ -97,6 +97,6 @@ fn is_non_volatile_field(context: &Context, field: &str) -> bool {
     let declaration = members.iter().find(|m| matches!(&m.kind, K::Vars(vars) if vars.iter().any(|v| v.name == field)));
     declaration.is_some_and(|d| {
         let K::Vars(vars) = &d.kind else { return false };
-        !has_modifier(&vars[0].mods, context.text, context.tokens(), "volatile")
+        !vars[0].mods.has(Modifier::Volatile)
     })
 }

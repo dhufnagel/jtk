@@ -7,7 +7,7 @@
 //! `if` block, and the tested expression is a name or field, so that casting it again gives the same object. The
 //! rest of the condition must not use the variable's name, which would then refer to the pattern variable.
 
-use crate::lint::tree::{Context, modifier_keywords, strip_parens};
+use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
 use jtk_parser::ast::{K, Tree};
 
@@ -17,7 +17,7 @@ pub fn check(statement: &Tree, context: &Context, diagnostics: &mut Vec<Diagnost
     let Some(declaration) = stmts.iter().find(|s| !matches!(s.kind, K::Empty)) else { return };
     let K::Vars(vars) = &declaration.kind else { return };
     let [var] = vars.as_slice() else { return };
-    if !var.mods.annotations.is_empty() || !modifier_keywords(&var.mods, context.text, context.tokens()).is_empty() {
+    if !var.mods.annotations.is_empty() || !var.mods.keywords.is_empty() {
         return;
     }
     let Some((cast_type, operand)) = cast(var, context) else { return };

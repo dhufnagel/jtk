@@ -2,18 +2,17 @@
 //!
 //! As in Checkstyle, the public type (or else the first one) may stay; every other top-level type is reported.
 
-use super::{has_keyword, top_level_types};
+use super::top_level_types;
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::Tree;
+use jtk_parser::ast::{Modifier, Tree};
 
-pub fn check(unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+pub fn check(unit: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
     if top_level_types(unit).nth(1).is_none() {
         return;
     }
-    let types: Vec<_> = top_level_types(unit)
-        .map(|(tree, class)| (tree, &class.name, has_keyword(&class.mods, class.name_pos, "public", context)))
-        .collect();
+    let types: Vec<_> =
+        top_level_types(unit).map(|(tree, class)| (tree, &class.name, class.mods.has(Modifier::Public))).collect();
     let Some(&(_, _, first_is_public)) = types.first() else { return };
     let any_public = types.iter().any(|(_, _, is_public)| *is_public);
     let reported = types.iter().enumerate().filter(

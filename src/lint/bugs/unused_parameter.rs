@@ -8,16 +8,19 @@
 //! name that shadows the parameter counts as a use of it.
 
 use super::shared_b::is_name_reference_in;
-use crate::lint::tree::{Context, has_modifier, in_type, path_to};
+use crate::lint::tree::{Context, in_type, path_to};
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{K, MethodDecl, Tree};
+use jtk_parser::ast::{K, MethodDecl, Modifier, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Method(method) = &tree.kind else { return };
     let text = context.text;
     let Some(body) = method.body.as_deref() else { return };
-    let has = |keyword| has_modifier(&method.mods, text, context.tokens(), keyword);
-    if method.compact_ctor || !has("private") || has("default") || is_serialization_read_object(method, text) {
+    if method.compact_ctor
+        || !method.mods.has(Modifier::Private)
+        || method.mods.has(Modifier::Default)
+        || is_serialization_read_object(method, text)
+    {
         return;
     }
     let kind = if method.ret.is_some() { "method" } else { "constructor" };

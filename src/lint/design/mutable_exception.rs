@@ -5,12 +5,11 @@
 //! classes, which are checked on their own), and an extended class with type arguments does not count as an
 //! exception.
 
-use super::has_keyword;
 use crate::lint::tree::{Context, for_each_descendant};
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassKind, K, Tree};
+use jtk_parser::ast::{ClassKind, K, Modifier, Tree};
 
-pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+pub fn check(tree: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Class(class) = &tree.kind else { return };
     if class.kind != ClassKind::Class || !is_exception_name(&class.name) || !extends_exception(class.extends.as_deref())
     {
@@ -18,19 +17,19 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
     }
     let is_class = |node: &Tree| matches!(&node.kind, K::Class(nested) if nested.kind == ClassKind::Class);
     for member in class.members.iter().filter(|m| !is_class(m)) {
-        check_field(member, tree, context, diagnostics);
+        check_field(member, tree, diagnostics);
         for_each_descendant(member, &mut |node, parent| {
-            check_field(node, parent, context, diagnostics);
+            check_field(node, parent, diagnostics);
             !is_class(node)
         });
     }
 }
 
 /// Reports a field declaration that is not final.
-fn check_field(node: &Tree, parent: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+fn check_field(node: &Tree, parent: &Tree, diagnostics: &mut Vec<Diagnostic>) {
     let K::Vars(vars) = &node.kind else { return };
     let is_field = matches!(parent.kind, K::Class(_) | K::NewClass { .. });
-    if is_field && !has_keyword(&vars[0].mods, vars[0].name_pos, "final", context) {
+    if is_field && !vars[0].mods.has(Modifier::Final) {
         for var in vars {
             let message = format!("The field '{}' must be declared final", var.name);
             diagnostics.push(Diagnostic::new(Rule::MutableException, node.start, message));

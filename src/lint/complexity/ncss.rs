@@ -10,9 +10,9 @@
 
 use super::{file_position, is_annotation_type, is_method_like};
 use crate::lint::options::JavaNcss;
-use crate::lint::tree::{Context, has_modifier};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassKind, K, Tree};
+use jtk_parser::ast::{ClassKind, K, Modifier, Tree};
 
 pub struct Ncss {
     limits: JavaNcss,
@@ -92,8 +92,7 @@ fn statements(tree: &Tree, parent: Option<&Tree>, context: &Context) -> u32 {
         K::Method(m) if parent.is_some_and(is_annotation_type) => u32::from(m.default_value.is_some()),
         K::Method(m) => {
             // The text is searched first, which is cheaper than lexing the file.
-            let is_default = context.text[tree.start..m.name_pos].contains("default")
-                && has_modifier(&m.mods, context.text, context.tokens(), "default");
+            let is_default = context.text[tree.start..m.name_pos].contains("default") && m.mods.has(Modifier::Default);
             1 + u32::from(is_default)
         }
         K::Block { .. } => u32::from(is_method_like(tree, parent)),

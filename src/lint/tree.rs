@@ -7,7 +7,7 @@ use std::ops::Range;
 use std::path::Path;
 
 use crate::lint::{Diagnostic, Rule, RuleOptions, Selection};
-use jtk_parser::ast::{K, LitKind, Mods, Tag, Tree};
+use jtk_parser::ast::{K, LitKind, Tag, Tree};
 use jtk_parser::lexer::{RawKind, lex};
 
 /// What a check sees besides the tree it checks.
@@ -175,51 +175,6 @@ fn walk<'t>(root: &'t Tree, context: &mut Context<'t>, checks: &[Vec<TreeCheck>]
             }
         }
     }
-}
-
-/// The modifier keywords of a declaration (`public`, `static`, `non-sealed`, ...) with their ranges, in order:
-/// the tokens from the start of the modifiers that are not in an annotation.
-pub(super) fn modifier_keywords<'a>(mods: &Mods, text: &'a str, tokens: &Tokens) -> Vec<(&'a str, Range<usize>)> {
-    const KEYWORDS: &[&str] = &[
-        "public",
-        "protected",
-        "private",
-        "static",
-        "abstract",
-        "final",
-        "native",
-        "synchronized",
-        "transient",
-        "volatile",
-        "strictfp",
-        "default",
-        "sealed",
-    ];
-    let mut keywords = Vec::new();
-    let mut offset = mods.start;
-    while let Some(token) = tokens.next(offset) {
-        offset = token.end;
-        if let Some(annotation) = mods.annotations.iter().find(|a| a.start <= token.start && token.start < a.end) {
-            offset = annotation.end;
-            continue;
-        }
-        let word = &text[token.clone()];
-        if KEYWORDS.contains(&word) {
-            keywords.push((word, token));
-        } else if word == "non" && text[token.end..].starts_with("-sealed") {
-            let range = token.start..token.end + "-sealed".len();
-            offset = range.end;
-            keywords.push((&text[range.clone()], range));
-        } else {
-            break;
-        }
-    }
-    keywords
-}
-
-/// Whether the declaration has the modifier keyword.
-pub(super) fn has_modifier(mods: &Mods, text: &str, tokens: &Tokens, keyword: &str) -> bool {
-    modifier_keywords(mods, text, tokens).iter().any(|(k, _)| *k == keyword)
 }
 
 /// Calls `f` on each descendant of `tree` (not `tree` itself) in source order, with its parent; `f` returns

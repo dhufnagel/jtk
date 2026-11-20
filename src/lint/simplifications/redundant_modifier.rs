@@ -10,9 +10,9 @@
 //! - enum constructor modifiers, and `public` on constructors of classes that are neither public nor protected
 //! - `strictfp`, which has no effect since Java 17
 
-use crate::lint::tree::{Context, has_modifier, modifier_keywords};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
-use jtk_parser::ast::{ClassDecl, ClassKind, K, Mods, Tree, VarDecl};
+use jtk_parser::ast::{ClassDecl, ClassKind, K, Modifier, Mods, Tree, VarDecl};
 
 use super::removal_range;
 
@@ -25,15 +25,15 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
     match &tree.kind {
         K::Class(class) => {
             let mut redundant = match class.kind {
-                ClassKind::Interface | ClassKind::Annotation => vec!["static", "abstract"],
-                ClassKind::Enum => vec!["static"],
-                ClassKind::Record => vec!["final", "static"],
+                ClassKind::Interface | ClassKind::Annotation => vec![Modifier::Static, Modifier::Abstract],
+                ClassKind::Enum => vec![Modifier::Static],
+                ClassKind::Record => vec![Modifier::Final, Modifier::Static],
                 ClassKind::Class => vec![],
             };
             if is_interface_member {
-                redundant.extend(["public", "static"]);
+                redundant.extend([Modifier::Public, Modifier::Static]);
                 if class.kind != ClassKind::Class {
-                    redundant.extend(["abstract", "final"]);
+                    redundant.extend([Modifier::Abstract, Modifier::Final]);
                 }
             }
             report(&class.mods, &redundant, context, diagnostics);
@@ -49,16 +49,16 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
                 _ if method.compact_ctor => {}
                 None => constructor_redundant(tree, &method.mods, context, &mut redundant),
                 Some(_) if !is_annotation_element && is_final_redundant(tree, &method.mods, context) => {
-                    redundant.push("final")
+                    redundant.push(Modifier::Final)
                 }
                 Some(_) => {}
             }
             if is_interface_member {
-                redundant.push("public");
+                redundant.push(Modifier::Public);
                 if is_annotation_element {
-                    redundant.push("static");
+                    redundant.push(Modifier::Static);
                 }
-                redundant.extend(["abstract", "final"]);
+                redundant.extend([Modifier::Abstract, Modifier::Final]);
             }
             if !method.compact_ctor {
                 report(&method.mods, &redundant, context, diagnostics);
@@ -71,21 +71,21 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
         K::Vars(vars) => {
             let mut redundant = Vec::new();
             if vars.iter().any(|v| v.name == "_") {
-                redundant.push("final");
+                redundant.push(Modifier::Final);
             }
             if is_interface_member {
-                redundant.extend(["public", "static", "abstract", "final"]);
+                redundant.extend([Modifier::Public, Modifier::Static, Modifier::Abstract, Modifier::Final]);
             }
             report(&vars[0].mods, &redundant, context, diagnostics);
         }
         K::Try { resources, catches, .. } => {
             for resource in resources {
                 if let K::Var(var) = &resource.kind {
-                    report(&var.mods, &["final"], context, diagnostics);
+                    report(&var.mods, &[Modifier::Final], context, diagnostics);
                 }
             }
             for catch in catches {
-                let redundant: &[&str] = if catch.param.name == "_" { &["final"] } else { &[] };
+                let redundant: &[Modifier] = if catch.param.name == "_" { &[Modifier::Final] } else { &[] };
                 report(&catch.param.mods, redundant, context, diagnostics);
             }
         }
@@ -108,14 +108,11 @@ fn check_parameter(
 ) {
     let is_variable_arity = context.tokens().previous(parameter.name_pos).is_some_and(|t| &context.text[t] == "...");
     if !is_variable_arity {
-        let redundant: &[&str] = if parameter.name == "_" { &["final"] } else { &[] };
+        let redundant: &[Modifier] = if parameter.name == "_" { &[Modifier::Final] } else { &[] };
         report(&parameter.mods, redundant, context, diagnostics);
     }
     if in_method_without_body {
-        for (_, keyword) in modifier_keywords(&parameter.mods, context.text, context.tokens())
-            .into_iter()
-            .filter(|(k, _)| *k == "final")
-        {
+        for (_, keyword) in parameter.mods.keywords.iter().filter(|(m, _)| *m == Modifier::Final) {
             let fix = Edit::new(removal_range(keyword.clone(), context.text), "");
             let diagnostic = Diagnostic::new(Rule::RedundantModifier, keyword.start, "Redundant 'final' modifier");
             diagnostics.push(diagnostic.with_fix(vec![fix]));
@@ -124,12 +121,12 @@ fn check_parameter(
 }
 
 /// Reports the modifier keywords that are `redundant`, and `strictfp`.
-fn report(mods: &Mods, redundant: &[&str], context: &Context, diagnostics: &mut Vec<Diagnostic>) {
-    for (keyword, range) in modifier_keywords(mods, context.text, context.tokens()) {
-        if keyword != "strictfp" && !redundant.contains(&keyword) {
+fn report(mods: &Mods, redundant: &[Modifier], context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+    for (modifier, range) in &mods.keywords {
+        if *modifier != Modifier::Strictfp && !redundant.contains(modifier) {
             continue;
         }
-        let message = format!("Redundant '{keyword}' modifier");
+        let message = format!("Redundant '{}' modifier", modifier.keyword());
         let fix = Edit::new(removal_range(range.clone(), context.text), "");
         diagnostics.push(Diagnostic::new(Rule::RedundantModifier, range.start, message).with_fix(vec![fix]));
     }
@@ -137,42 +134,39 @@ fn report(mods: &Mods, redundant: &[&str], context: &Context, diagnostics: &mut 
 
 /// The redundant modifiers of a constructor: all in an enum, where constructors are private, and `public` in a class
 /// that is neither public nor protected.
-fn constructor_redundant<'a>(constructor: &Tree, mods: &Mods, context: &'a Context, redundant: &mut Vec<&'a str>) {
-    let (text, tokens) = (context.text, context.tokens());
+fn constructor_redundant(constructor: &Tree, mods: &Mods, context: &Context, redundant: &mut Vec<Modifier>) {
     let owner = context.parent().and_then(|p| match &p.kind {
         K::Class(class) if is_member(class, constructor) => Some(class),
         _ => None,
     });
     if owner.is_some_and(|class| class.kind == ClassKind::Enum) {
-        redundant.extend(modifier_keywords(mods, text, tokens).into_iter().map(|(k, _)| k));
+        redundant.extend(mods.keywords.iter().map(|(modifier, _)| *modifier));
         return;
     }
     let accessible = owner.is_some_and(|class| {
-        is_public_class(&context.ancestors, context.ancestors.len() - 1, context)
-            || has_modifier(&class.mods, text, tokens, "protected")
+        is_public_class(&context.ancestors, context.ancestors.len() - 1) || class.mods.has(Modifier::Protected)
     });
     if !accessible {
-        redundant.push("public");
+        redundant.push(Modifier::Public);
     }
 }
 
 /// Whether a method cannot be overridden even without `final`. `@SafeVarargs` needs `final` (or `static` or
 /// `private`) on the method, so `final` is kept there.
 fn is_final_redundant(method: &Tree, mods: &Mods, context: &Context) -> bool {
-    let (text, tokens) = (context.text, context.tokens());
     if has_annotation(mods, "SafeVarargs", context) {
         return false;
     }
-    if has_modifier(mods, text, tokens, "private") {
+    if mods.has(Modifier::Private) {
         return true;
     }
     match context.parent().map(|p| &p.kind) {
         Some(K::Class(class)) if class.kind == ClassKind::Enum => {
             // Enum methods can be overridden in the bodies of the constants, unless static; the bodies of the
             // constants cannot be extended.
-            !is_member(class, method) || has_modifier(mods, text, tokens, "static")
+            !is_member(class, method) || mods.has(Modifier::Static)
         }
-        Some(K::Class(class)) => class.kind == ClassKind::Class && has_modifier(&class.mods, text, tokens, "final"),
+        Some(K::Class(class)) => class.kind == ClassKind::Class && class.mods.has(Modifier::Final),
         // Anonymous classes cannot be extended.
         Some(K::NewClass { .. }) => true,
         _ => false,
@@ -190,16 +184,16 @@ fn has_annotation(mods: &Mods, name: &str, context: &Context) -> bool {
 
 /// Whether the class `ancestors[index]` is accessible everywhere: public (explicitly, or implicitly as a member of an
 /// interface), and nested only in types that are accessible everywhere.
-fn is_public_class(ancestors: &[&Tree], index: usize, context: &Context) -> bool {
+fn is_public_class(ancestors: &[&Tree], index: usize) -> bool {
     let class = ancestors[index];
     let K::Class(declaration) = &class.kind else { return false };
     let Some(container) = index.checked_sub(1).map(|i| ancestors[i]) else { return false };
-    let is_public = || has_modifier(&declaration.mods, context.text, context.tokens(), "public");
+    let is_public = || declaration.mods.has(Modifier::Public);
     match &container.kind {
         K::CompilationUnit { .. } => is_public(),
         K::Class(outer) if is_member(outer, class) => {
             let implicitly_public = matches!(outer.kind, ClassKind::Interface | ClassKind::Annotation);
-            (implicitly_public || is_public()) && is_public_class(ancestors, index - 1, context)
+            (implicitly_public || is_public()) && is_public_class(ancestors, index - 1)
         }
         // Local classes, and members of anonymous classes and enum constants.
         _ => false,

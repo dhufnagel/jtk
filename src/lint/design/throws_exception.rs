@@ -13,10 +13,10 @@
 //! written fully qualified or imported by a single-type import (not by `import org.junit.*;`). A JUnit 3 test class is
 //! a top-level, concrete class extending `TestCase`.
 
-use super::{has_keyword, qualified_name, simple_name, single_type_imports};
+use super::{qualified_name, simple_name, single_type_imports};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassDecl, ClassKind, K, MethodDecl, Tree};
+use jtk_parser::ast::{ClassDecl, ClassKind, K, MethodDecl, Modifier, Tree};
 
 /// JUnit 4 and 5 and TestNG annotations of test methods.
 const TEST_ANNOTATIONS: &[&str] = &[
@@ -91,18 +91,17 @@ fn is_ignored(method: &MethodDecl, context: &Context) -> bool {
     if is_annotated(TEST_ANNOTATIONS) || is_annotated(CONFIGURATION_ANNOTATIONS) {
         return true;
     }
-    let has = |keyword| has_keyword(&method.mods, method.name_pos, keyword, context);
     let owner = context.parent();
     let name = method.name.as_str();
     let is_junit3_method = name == "setUp"
         || name == "tearDown"
         || name.starts_with("test")
-            && has("public")
+            && method.mods.has(Modifier::Public)
             && method.ret.as_deref().is_some_and(|r| matches!(&r.kind, K::Primitive(p) if p == "void"));
     if is_junit3_method && owner.is_some_and(|o| is_junit3_class(o, context)) {
         return true;
     }
-    if has("static") || has("private") {
+    if method.mods.has(Modifier::Static) || method.mods.has(Modifier::Private) {
         return false;
     }
     overrides_jdk_method(method, owner)
@@ -124,7 +123,7 @@ fn is_junit3_class(owner: &Tree, context: &Context) -> bool {
     let unit = context.ancestors[0];
     class.kind == ClassKind::Class
         && context.grandparent().is_some_and(|g| std::ptr::eq(g, unit))
-        && !has_keyword(&class.mods, class.name_pos, "abstract", context)
+        && !class.mods.has(Modifier::Abstract)
         && class.extends.as_deref().is_some_and(|s| resolve(&qualified_name(s), unit) == "junit.framework.TestCase")
 }
 

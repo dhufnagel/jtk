@@ -9,10 +9,9 @@
 //!
 //! Unlike Checkstyle without its suppression filter, jtk honours `@SuppressWarnings("MagicNumber")`.
 
-use super::has_keyword;
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassKind, K, LitKind, Tree};
+use jtk_parser::ast::{ClassKind, K, LitKind, Modifier, Tree};
 
 pub fn check(number: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     if !matches!(number.kind, K::Literal(LitKind::Int | LitKind::Long | LitKind::Float | LitKind::Double)) {
@@ -43,7 +42,7 @@ pub fn check(number: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>
     // Compared like Java's `Arrays.binarySearch`, for which -0.0 is not 0.
     let ignored = &context.options.magic_number.ignore_numbers;
     let is_ignored = value.is_some_and(|v| ignored.iter().any(|n| n.total_cmp(&v).is_eq()));
-    if is_ignored || !is_magic(number, ancestors, context) {
+    if is_ignored || !is_magic(number, ancestors) {
         return;
     }
     let (prefix, offset) = sign.unwrap_or(("", number.start));
@@ -60,15 +59,14 @@ fn is_in_annotation_element(ancestors: &[&Tree]) -> bool {
 }
 
 /// Whether a number with these ancestors is not part of a constant definition.
-fn is_magic(number: &Tree, ancestors: &[&Tree], context: &Context) -> bool {
+fn is_magic(number: &Tree, ancestors: &[&Tree]) -> bool {
     let child = |i: usize| ancestors.get(i + 1).copied().unwrap_or(number);
     // The nearest definition of a variable or enum constant.
     let Some(definition) = (0..ancestors.len()).rev().find(|&i| is_definition(ancestors[i], child(i))) else {
         return true;
     };
     if let K::Vars(vars) = &ancestors[definition].kind {
-        let is_constant =
-            is_in_interface(&ancestors[..definition]) || has_keyword(&vars[0].mods, vars[0].name_pos, "final", context);
+        let is_constant = is_in_interface(&ancestors[..definition]) || vars[0].mods.has(Modifier::Final);
         if !is_constant {
             return true;
         }

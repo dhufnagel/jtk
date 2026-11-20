@@ -7,9 +7,9 @@
 //! or other method (also of a nested class) does not.
 
 use super::avoided_methods::{declared_method, is_parameterless};
-use crate::lint::tree::{Context, has_modifier};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassKind, K, Tree};
+use jtk_parser::ast::{ClassKind, K, Modifier, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let Some(method) = declared_method(tree, context) else { return };
@@ -17,7 +17,7 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
     let in_interface =
         context.parent().is_some_and(|p| matches!(&p.kind, K::Class(c) if c.kind == ClassKind::Interface));
     if in_interface
-        || has_modifier(&method.mods, context.text, context.tokens(), "native")
+        || method.mods.has(Modifier::Native)
         || method.body.as_deref().is_some_and(|body| calls_super(body, name))
     {
         return;

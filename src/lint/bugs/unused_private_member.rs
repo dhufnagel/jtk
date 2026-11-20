@@ -15,9 +15,9 @@ use std::cell::OnceCell;
 use std::collections::HashSet;
 
 use super::shared_b::{is_name_reference_in, is_side_effect_free, is_simple_literal};
-use crate::lint::tree::{Context, for_each_descendant, has_modifier, is_type_child};
+use crate::lint::tree::{Context, for_each_descendant, is_type_child};
 use crate::lint::{Diagnostic, Edit, Rule};
-use jtk_parser::ast::{ClassKind, K, LitKind, Mods, Tree, VarDecl};
+use jtk_parser::ast::{ClassKind, K, LitKind, Modifier, Mods, Tree, VarDecl};
 
 const SERIALIZATION_FIELDS: &[&str] = &["serialVersionUID", "serialPersistentFields"];
 const SERIALIZATION_METHODS: &[&str] =
@@ -30,8 +30,7 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
     let names = OnceCell::new();
     let names = || names.get_or_init(|| UsedNames::find(tree, text));
     let uses_lombok = imports.iter().any(|i| context.source(i).contains("lombok."));
-    let is_candidate =
-        |mods: &Mods| mods.annotations.is_empty() && has_modifier(mods, text, context.tokens(), "private");
+    let is_candidate = |mods: &Mods| mods.annotations.is_empty() && mods.has(Modifier::Private);
     for_each_descendant(tree, &mut |member, parent| {
         match &member.kind {
             K::Vars(vars) if !uses_lombok && is_field_declaration(parent) && is_candidate(&vars[0].mods) => {

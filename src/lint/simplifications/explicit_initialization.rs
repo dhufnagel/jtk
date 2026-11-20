@@ -6,9 +6,9 @@
 //! so it would reset a value that an overridden method called from that constructor assigned; like the IDEs' quick
 //! fixes, the fix assumes that code does not depend on this.
 
-use crate::lint::tree::{Context, has_modifier};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
-use jtk_parser::ast::{ClassKind, K, LitKind, Tree};
+use jtk_parser::ast::{ClassKind, K, LitKind, Modifier, Tree};
 
 pub fn check(field: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Vars(declarators) = &field.kind else { return };
@@ -17,7 +17,7 @@ pub fn check(field: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>)
         K::NewClass { .. } => true,
         _ => false,
     });
-    if !is_field || has_modifier(&declarators[0].mods, context.text, context.tokens(), "final") {
+    if !is_field || declarators[0].mods.has(Modifier::Final) {
         return;
     }
     for declarator in declarators {

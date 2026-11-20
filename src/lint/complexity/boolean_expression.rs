@@ -13,9 +13,9 @@
 use std::ptr;
 
 use super::{is_annotation_type, is_constructor_call, token_after, token_before};
-use crate::lint::tree::{Context, has_modifier};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{Case, K, Tree};
+use jtk_parser::ast::{Case, K, Modifier, Tree};
 
 pub struct BooleanExpression {
     max: u32,
@@ -30,7 +30,7 @@ impl BooleanExpression {
     }
 
     pub fn enter(&mut self, tree: &Tree, ancestors: &[&Tree], context: &Context) {
-        if !is_counted_operator(tree, ancestors) || !is_checked(ancestors, context) {
+        if !is_counted_operator(tree, ancestors) || !is_checked(ancestors) {
             return;
         }
         let Some((id, position)) = enclosing_expression(tree, ancestors, context) else { return };
@@ -66,16 +66,13 @@ fn enclosing_expression(operator: &Tree, ancestors: &[&Tree], context: &Context)
 
 /// Whether code with these ancestors is checked: it must be in a method or constructor, and the innermost one must
 /// not be an `equals` method (whose body typically chains comparisons of all fields).
-fn is_checked(ancestors: &[&Tree], context: &Context) -> bool {
+fn is_checked(ancestors: &[&Tree]) -> bool {
     let method = (1..ancestors.len()).rev().find_map(|i| match &ancestors[i].kind {
         K::Method(m) if !is_annotation_type(ancestors[i - 1]) => Some(m),
         _ => None,
     });
     method.is_some_and(|m| {
-        let is_equals = m.ret.is_some()
-            && m.name == "equals"
-            && m.params.len() == 1
-            && !has_modifier(&m.mods, context.text, context.tokens(), "static");
+        let is_equals = m.ret.is_some() && m.name == "equals" && m.params.len() == 1 && !m.mods.has(Modifier::Static);
         !is_equals
     })
 }

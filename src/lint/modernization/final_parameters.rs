@@ -3,13 +3,13 @@
 //! are skipped; lambda, `catch` and record parameters are not checked. The fix adds `final`, unless the body assigns
 //! the name (then the parameter is reported, as by Checkstyle, but `final` would not compile).
 
-use crate::lint::tree::{Context, for_each_descendant, has_modifier};
+use crate::lint::tree::{Context, for_each_descendant};
 use crate::lint::{Diagnostic, Edit, Rule};
-use jtk_parser::ast::{K, Tree};
+use jtk_parser::ast::{K, Modifier, Tree};
 
 use super::shared_a::assigned_name;
 
-pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
+pub fn check<'t>(tree: &'t Tree, _: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
     let K::Method(method) = &tree.kind else { return };
     let Some(body) = method.body.as_deref() else { return };
     if method.compact_ctor {
@@ -19,7 +19,7 @@ pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Di
         let Some(parameter_type) = parameter.ty.as_deref() else { continue };
         let name = parameter.name.as_str();
         // An annotated receiver parameter (`@A Foo this`) is parsed as a parameter named `this`.
-        if matches!(name, "_" | "this") || has_modifier(&parameter.mods, context.text, context.tokens(), "final") {
+        if matches!(name, "_" | "this") || parameter.mods.has(Modifier::Final) {
             continue;
         }
         let message = format!("Parameter {name} should be final");

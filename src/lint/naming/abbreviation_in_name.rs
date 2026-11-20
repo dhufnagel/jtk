@@ -43,12 +43,12 @@ fn for_each_name(tree: &Tree, context: &Context, mut f: impl FnMut(&str, usize))
         }
         K::Vars(vars) => {
             let is_constant = is_field(context) && is_interface_member(context);
-            if !is_constant && !vars.first().is_some_and(|v| is_static_or_final(&v.mods, context)) {
+            if !is_constant && !vars.first().is_some_and(|v| is_static_or_final(&v.mods)) {
                 vars.iter().for_each(|v| f(&v.name, v.name_pos));
             }
         }
         K::ForEach { var, .. } => {
-            if !is_static_or_final(&var.mods, context) {
+            if !is_static_or_final(&var.mods) {
                 f(&var.name, var.name_pos);
             }
         }

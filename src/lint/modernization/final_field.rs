@@ -21,9 +21,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::lint::tree::{Context, has_modifier, is_type_child};
+use crate::lint::tree::{Context, is_type_child};
 use crate::lint::{Diagnostic, Edit, Rule};
-use jtk_parser::ast::{ClassDecl, ClassKind, K, MethodDecl, Tree, VarDecl};
+use jtk_parser::ast::{ClassDecl, ClassKind, K, MethodDecl, Modifier, Tree, VarDecl};
 
 pub fn check<'t>(unit: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
     let mut analysis = Analysis {
@@ -248,14 +248,12 @@ impl<'t> Analysis<'_, 't> {
 
     /// Walks a class declaration and its body.
     fn class(&mut self, tree: &'t Tree, class: &'t ClassDecl, frames: &mut Vec<Frame<'t>>) {
-        let text = self.context.text;
-        let tokens = self.context.tokens();
         // A member of a type or of the compilation unit, or a local class.
         let is_member = frames.last().is_some_and(|f| {
             matches!(f.kind, FrameKind::Type(_)) || f.tree.is_some_and(|t| matches!(t.kind, K::CompilationUnit { .. }))
         });
         let enclosing_private = innermost_type(frames).is_some_and(|i| self.types[i].effectively_private);
-        let effectively_private = enclosing_private || !is_member || has_modifier(&class.mods, text, tokens, "private");
+        let effectively_private = enclosing_private || !is_member || class.mods.has(Modifier::Private);
         frames.push(Frame::new(Some(tree), FrameKind::Other));
         for annotation in &class.mods.annotations {
             self.walk(annotation, false, frames);
@@ -300,8 +298,7 @@ impl<'t> Analysis<'_, 't> {
             match &member.kind {
                 // Fields, or constants of an interface.
                 K::Vars(vars) => {
-                    let text = self.context.text;
-                    let is_static = has_modifier(&vars[0].mods, text, self.context.tokens(), "static");
+                    let is_static = vars[0].mods.has(Modifier::Static);
                     let initializer = (!is_interface && !is_static).then_some(index);
                     frames.push(Frame::new(Some(member), FrameKind::Other));
                     self.variables(vars, Some(initializer), frames);
@@ -327,7 +324,6 @@ impl<'t> Analysis<'_, 't> {
         kind: ClassKind,
     ) -> usize {
         let text = self.context.text;
-        let tokens = self.context.tokens();
         let lombok_class =
             self.uses_lombok && annotation_names(annotations, text).any(|a| LOMBOK_CLASS_ANNOTATIONS.contains(&a));
         let is_interface = matches!(kind, ClassKind::Interface | ClassKind::Annotation);
@@ -338,13 +334,12 @@ impl<'t> Analysis<'_, 't> {
             let K::Vars(variables) = &member.kind else { continue };
             field_names.extend(variables.iter().map(|v| v.name.as_str()));
             let mods = &variables[0].mods;
-            let modifier = |keyword| has_modifier(mods, text, tokens, keyword);
             let candidate = kind != ClassKind::Record
                 && !lombok_class
-                && !modifier("static")
-                && !modifier("final")
-                && !modifier("volatile")
-                && (effectively_private || modifier("private"))
+                && !mods.has(Modifier::Static)
+                && !mods.has(Modifier::Final)
+                && !mods.has(Modifier::Volatile)
+                && (effectively_private || mods.has(Modifier::Private))
                 && !annotation_names(&mods.annotations, text).any(|a| INVALIDATING_FIELD_ANNOTATIONS.contains(&a));
             fields.push(Field { variables, candidate });
         }

@@ -4,36 +4,37 @@
 //! As in Checkstyle, abstract and `static` classes and classes that extend another class are not utility classes,
 //! and a protected constructor hides the constructor too.
 
-use super::has_keyword;
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassKind, K, Tree};
+use jtk_parser::ast::{ClassKind, K, Modifier, Tree};
 
-pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
+pub fn check(tree: &Tree, _: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Class(class) = &tree.kind else { return };
-    let class_has = |keyword| has_keyword(&class.mods, class.name_pos, keyword, context);
-    if class.kind != ClassKind::Class || class.extends.is_some() || class_has("abstract") || class_has("static") {
+    if class.kind != ClassKind::Class
+        || class.extends.is_some()
+        || class.mods.has(Modifier::Abstract)
+        || class.mods.has(Modifier::Static)
+    {
         return;
     }
     let mut has_visible_static_member = false;
     let mut has_constructor = false;
     let mut has_visible_constructor = false;
     for member in &class.members {
-        let (mods, name_pos, is_constructor) = match &member.kind {
-            K::Method(method) => (&method.mods, method.name_pos, method.ret.is_none()),
-            K::Vars(vars) => (&vars[0].mods, vars[0].name_pos, false),
+        let (mods, is_constructor) = match &member.kind {
+            K::Method(method) => (&method.mods, method.ret.is_none()),
+            K::Vars(vars) => (&vars[0].mods, false),
             _ => continue,
         };
-        let has = |keyword| has_keyword(mods, name_pos, keyword, context);
         if is_constructor {
             has_constructor = true;
-            if !has("private") && !has("protected") {
+            if !mods.has(Modifier::Private) && !mods.has(Modifier::Protected) {
                 has_visible_constructor = true;
             }
-        } else if !has("static") {
+        } else if !mods.has(Modifier::Static) {
             // An instance member: not a utility class.
             return;
-        } else if !has("private") {
+        } else if !mods.has(Modifier::Private) {
             has_visible_static_member = true;
         }
     }

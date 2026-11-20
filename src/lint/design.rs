@@ -15,10 +15,9 @@ mod visibility_modifier;
 mod abstract_without_abstract;
 mod throws_exception;
 
-use jtk_parser::ast::{ClassDecl, K, Mods, Tag, Tree};
+use jtk_parser::ast::{ClassDecl, K, Tag, Tree};
 
 use super::Rule;
-use super::tree::{Context, has_modifier};
 
 /// The checks on the AST, with the kinds of trees each checks.
 pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
@@ -36,12 +35,6 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::MagicNumber, &[Tag::Literal], magic_number::check),
     (Rule::OuterTypeFilename, &[Tag::CompilationUnit], outer_type_filename::check),
 ];
-
-/// Whether a declaration whose modifiers end before `end` (its name) has the modifier keyword. Lexes only if the
-/// keyword is in the text.
-fn has_keyword(mods: &Mods, end: usize, keyword: &str, context: &Context) -> bool {
-    context.text[mods.start..end].contains(keyword) && has_modifier(mods, context.text, context.tokens(), keyword)
-}
 
 /// The qualified name of a type or package (or annotation) without type arguments and annotations: `a.b.C<D>` is
 /// `a.b.C`.

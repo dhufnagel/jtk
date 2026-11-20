@@ -6,18 +6,17 @@
 //! classes whose qualified name ends with it, the one sharing the longest prefix with the type where the name
 //! appears (the class's enclosing type for `extends`).
 
-use super::{has_keyword, package_name, qualified_name};
+use super::{package_name, qualified_name};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassKind, K, Tree};
+use jtk_parser::ast::{ClassKind, K, Modifier, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Class(class) = &tree.kind else { return };
     if class.kind != ClassKind::Class {
         return;
     }
-    let class_has = |keyword| has_keyword(&class.mods, class.name_pos, keyword, context);
-    if class_has("final") || class_has("abstract") {
+    if class.mods.has(Modifier::Final) || class.mods.has(Modifier::Abstract) {
         return;
     }
     let mut constructors = class.members.iter().filter_map(|m| match &m.kind {
@@ -25,10 +24,8 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
         _ => None,
     });
     let only_private = match constructors.next() {
-        None => class_has("private"),
-        Some(first) => {
-            [first].into_iter().chain(constructors).all(|c| has_keyword(&c.mods, c.name_pos, "private", context))
-        }
+        None => class.mods.has(Modifier::Private),
+        Some(first) => [first].into_iter().chain(constructors).all(|c| c.mods.has(Modifier::Private)),
     };
     if !only_private || is_extended_in_file(tree, context.ancestors[0]) {
         return;

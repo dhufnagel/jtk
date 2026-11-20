@@ -4,10 +4,10 @@
 //! `@ClassRule` or Guava's `@VisibleForTesting` (by simple name, unless an import names another type so). Interface
 //! and annotation constants are not fields in this sense.
 
-use super::{has_keyword, qualified_name, simple_name, single_type_imports};
+use super::{qualified_name, simple_name, single_type_imports};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassKind, K, Tree};
+use jtk_parser::ast::{ClassKind, K, Modifier, Tree};
 
 /// The annotations that make a field visible on purpose.
 const IGNORED_ANNOTATIONS: &[&str] =
@@ -24,11 +24,13 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
         return;
     }
     let mods = &vars[0].mods;
-    let has = |keyword| has_keyword(mods, vars[0].name_pos, keyword, context);
-    if has("private") || (has("static") && has("final")) || has_ignored_annotation(&mods.annotations, context) {
+    if mods.has(Modifier::Private)
+        || (mods.has(Modifier::Static) && mods.has(Modifier::Final))
+        || has_ignored_annotation(&mods.annotations, context)
+    {
         return;
     }
-    let is_public = has("public");
+    let is_public = mods.has(Modifier::Public);
     for var in vars {
         if !(is_public && var.name == "serialVersionUID") {
             let message = format!("Variable '{}' must be private and have accessor methods", var.name);

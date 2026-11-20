@@ -21,9 +21,9 @@
 mod abbreviation_in_name;
 mod illegal_identifier;
 
-use super::tree::{Context, TreeCheck, modifier_keywords};
+use super::tree::{Context, TreeCheck};
 use super::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassKind, K, Mods, Tag, Tree, VarDecl};
+use jtk_parser::ast::{ClassKind, K, Modifier, Mods, Tag, Tree, VarDecl};
 
 /// The formats, as Checkstyle's regular expressions spell them.
 #[derive(Clone, Copy)]
@@ -120,8 +120,8 @@ fn is_annotation_element(context: &Context) -> bool {
 }
 
 /// Whether the declaration has a `static` or a `final` modifier.
-fn is_static_or_final(mods: &Mods, context: &Context) -> bool {
-    modifier_keywords(mods, context.text, context.tokens()).iter().any(|(k, _)| matches!(*k, "static" | "final"))
+fn is_static_or_final(mods: &Mods) -> bool {
+    mods.has(Modifier::Static) || mods.has(Modifier::Final)
 }
 
 /// The rule for the names of fields: constants (`static final` or in an interface or annotation type), static or
@@ -131,9 +131,7 @@ fn field_rule(vars: &[VarDecl], context: &Context) -> Rule {
         return Rule::ConstantName;
     }
     let Some(first) = vars.first() else { return Rule::MemberName };
-    let keywords = modifier_keywords(&first.mods, context.text, context.tokens());
-    let has = |keyword: &str| keywords.iter().any(|(k, _)| *k == keyword);
-    match (has("static"), has("final")) {
+    match (first.mods.has(Modifier::Static), first.mods.has(Modifier::Final)) {
         (true, true) => Rule::ConstantName,
         (true, false) => Rule::StaticVariableName,
         _ => Rule::MemberName,

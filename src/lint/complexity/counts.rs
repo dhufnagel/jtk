@@ -7,9 +7,9 @@
 //!   with `@Override`.
 
 use super::{file_position, token_before};
-use crate::lint::tree::{Context, has_modifier};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{ClassKind, K, Tree};
+use jtk_parser::ast::{ClassKind, K, Modifier, Tree};
 
 pub fn check_parameters(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Method(method) = &tree.kind else { return };
@@ -46,10 +46,7 @@ pub fn check_throws(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagno
     let K::Method(method) = &tree.kind else { return };
     let max = context.options.throws_count.max as usize;
     let count = method.throws.len();
-    if count <= max
-        || has_modifier(&method.mods, context.text, context.tokens(), "private")
-        || method.mods.annotations.iter().any(is_override)
-    {
+    if count <= max || method.mods.has(Modifier::Private) || method.mods.annotations.iter().any(is_override) {
         return;
     }
     let throws = token_before(context, method.throws[0].start, method.throws[0].start);

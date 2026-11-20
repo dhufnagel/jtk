@@ -8,27 +8,27 @@
 
 use std::ops::Range;
 
-use crate::lint::tree::{Context, modifier_keywords};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
-use jtk_parser::ast::{ClassKind, K, Mods, Tree};
+use jtk_parser::ast::{ClassKind, K, Modifier, Mods, Tree};
 
 use super::removal_range;
 
-const JLS_ORDER: &[&str] = &[
-    "public",
-    "protected",
-    "private",
-    "abstract",
-    "default",
-    "static",
-    "sealed",
-    "non-sealed",
-    "final",
-    "transient",
-    "volatile",
-    "synchronized",
-    "native",
-    "strictfp",
+const JLS_ORDER: &[Modifier] = &[
+    Modifier::Public,
+    Modifier::Protected,
+    Modifier::Private,
+    Modifier::Abstract,
+    Modifier::Default,
+    Modifier::Static,
+    Modifier::Sealed,
+    Modifier::NonSealed,
+    Modifier::Final,
+    Modifier::Transient,
+    Modifier::Volatile,
+    Modifier::Synchronized,
+    Modifier::Native,
+    Modifier::Strictfp,
 ];
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
@@ -58,40 +58,43 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
     }
 }
 
-/// A modifier: an annotation, or a keyword with its rank in the JLS order (`None` if it has none).
-enum Modifier<'t> {
+/// An item of a modifier list: an annotation, or a keyword with its rank in the JLS order.
+enum Item<'t> {
     Annotation(&'t Tree),
-    Keyword(Range<usize>, Option<usize>),
+    Keyword(Range<usize>, usize),
 }
 
-impl Modifier<'_> {
+impl Item<'_> {
     fn start(&self) -> usize {
         match self {
-            Modifier::Annotation(a) => a.start,
-            Modifier::Keyword(range, _) => range.start,
+            Item::Annotation(a) => a.start,
+            Item::Keyword(range, _) => range.start,
         }
     }
+}
+
+fn jls_rank(modifier: Modifier) -> usize {
+    JLS_ORDER.iter().position(|m| *m == modifier).expect("JLS_ORDER lists every modifier")
 }
 
 fn check_modifiers(mods: &Mods, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     if mods.annotations.is_empty() {
         return;
     }
-    let keywords = modifier_keywords(mods, context.text, context.tokens());
-    let mut items: Vec<Modifier> = mods.annotations.iter().map(Modifier::Annotation).collect();
-    items.extend(keywords.into_iter().map(|(k, r)| Modifier::Keyword(r, JLS_ORDER.iter().position(|o| *o == k))));
-    items.sort_by_key(Modifier::start);
+    let mut items: Vec<Item> = mods.annotations.iter().map(Item::Annotation).collect();
+    items.extend(mods.keywords.iter().map(|(modifier, range)| Item::Keyword(range.clone(), jls_rank(*modifier))));
+    items.sort_by_key(Item::start);
     let mut first_keyword = None;
     let mut last_rank = 0;
     for (index, item) in items.iter().enumerate() {
         match item {
-            Modifier::Annotation(annotation) => {
+            Item::Annotation(annotation) => {
                 if let Some(first_keyword) = first_keyword {
                     report(&items, first_keyword, annotation, context, diagnostics);
                     return;
                 }
             }
-            Modifier::Keyword(_, Some(rank)) => {
+            Item::Keyword(_, rank) => {
                 // Annotations after misordered keywords are left until the formatter has sorted the keywords.
                 if *rank < last_rank {
                     return;
@@ -99,13 +102,12 @@ fn check_modifiers(mods: &Mods, context: &Context, diagnostics: &mut Vec<Diagnos
                 last_rank = *rank;
                 first_keyword.get_or_insert(index);
             }
-            Modifier::Keyword(_, None) => {}
         }
     }
 }
 
 fn report(
-    items: &[Modifier],
+    items: &[Item],
     first_keyword: usize,
     annotation: &Tree,
     context: &Context,
@@ -115,15 +117,15 @@ fn report(
     let message = format!("'@{}' annotation should precede the modifier keywords", context.source(ty));
     let mut diagnostic = Diagnostic::new(Rule::AnnotationAfterModifier, annotation.start, message);
     let end = match &items[items.len() - 1] {
-        Modifier::Annotation(a) => a.end,
-        Modifier::Keyword(range, _) => range.end,
+        Item::Annotation(a) => a.end,
+        Item::Keyword(range, _) => range.end,
     };
     if !context.tokens().has_comment(items[0].start()..end) {
         let misplaced: Vec<&Tree> = items[first_keyword..]
             .iter()
             .filter_map(|m| match m {
-                Modifier::Annotation(a) => Some(*a),
-                Modifier::Keyword(..) => None,
+                Item::Annotation(a) => Some(*a),
+                Item::Keyword(..) => None,
             })
             .collect();
         let moved: String = misplaced.iter().map(|a| format!("{} ", context.source(a))).collect();

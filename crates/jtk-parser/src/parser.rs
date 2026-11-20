@@ -5,7 +5,7 @@
 //! does not recover from errors: it reports where parsing stopped.
 
 use crate::ast::{
-    B, Case, CaseKind, Catch, ClassDecl, ClassKind, EnumConstant, K, LitKind, MethodDecl, Mods, Tree, VarDecl,
+    B, Case, CaseKind, Catch, ClassDecl, ClassKind, EnumConstant, K, LitKind, MethodDecl, Modifier, Mods, Tree, VarDecl,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -74,14 +74,17 @@ const RESERVED: &[&str] = &[
     "throw", "throws", "transient", "try", "void", "volatile", "while", "true", "false", "null",
 ];
 
-#[rustfmt::skip]
-const MODIFIERS: &[&str] = &[
-    "public", "protected", "private", "static", "abstract", "final", "native", "synchronized", "transient",
-    "volatile", "strictfp", "default", "sealed",
-];
-
 fn is_ident(t: &str) -> bool {
     t.chars().next().is_some_and(|c| c.is_alphabetic() || c == '_' || c == '$') && !RESERVED.contains(&t)
+}
+
+fn is_modifier(t: &str) -> bool {
+    Modifier::from_keyword(t).is_some()
+}
+
+/// Whether `sealed` followed by `next` is a modifier rather than an identifier.
+fn can_follow_sealed(next: &str) -> bool {
+    is_ident(next) || is_modifier(next) || matches!(next, "class" | "interface" | "@")
 }
 
 fn is_primitive(t: &str) -> bool {
@@ -386,7 +389,7 @@ impl<'s> Parser<'s> {
                 i = j;
                 continue;
             }
-            if MODIFIERS.contains(&self.text_at(i)) {
+            if is_modifier(self.text_at(i)) {
                 i += 1;
                 continue;
             }
@@ -622,32 +625,31 @@ impl<'s> Parser<'s> {
     fn modifiers(&mut self) -> P<Mods> {
         let start = self.cur_start();
         let mut annotations = Vec::new();
+        let mut keywords = Vec::new();
         loop {
             if self.at_annotation() {
                 annotations.push(self.annotation()?);
                 continue;
             }
             let t = self.peek();
+            let keyword_start = self.cur_start();
             if t == "non" && self.peek_n(1) == "-" && self.peek_n(2) == "sealed" {
                 self.bump_n(3)?;
+                keywords.push((Modifier::NonSealed, keyword_start..self.prev_end));
                 continue;
             }
-            if MODIFIERS.contains(&t) {
-                let next = self.peek_n(1);
-                if t == "default" && matches!(next, ":" | "->" | ",") {
-                    break;
-                }
-                if t == "sealed"
-                    && !(is_ident(next) || MODIFIERS.contains(&next) || matches!(next, "class" | "interface" | "@"))
-                {
-                    break;
-                }
-                self.bump()?;
-                continue;
+            let Some(modifier) = Modifier::from_keyword(t) else { break };
+            let next = self.peek_n(1);
+            if modifier == Modifier::Default && matches!(next, ":" | "->" | ",") {
+                break;
             }
-            break;
+            if modifier == Modifier::Sealed && !can_follow_sealed(next) {
+                break;
+            }
+            self.bump()?;
+            keywords.push((modifier, keyword_start..self.prev_end));
         }
-        Ok(Mods { start, annotations })
+        Ok(Mods { start, annotations, keywords })
     }
 
     // ---- Declarations ----
@@ -984,7 +986,7 @@ impl<'s> Parser<'s> {
         Ok(VarDecl {
             start,
             end: self.prev_end,
-            mods: Mods { start, annotations },
+            mods: Mods { start, annotations, keywords: vec![] },
             ty: Some(Box::new(ty)),
             name: parts.join("."),
             init: None,
@@ -1255,7 +1257,7 @@ impl<'s> Parser<'s> {
             return Ok(self.tree(start, K::Vars(vars)));
         }
         if t != "yield" && self.at_local_var_decl() {
-            let mods = Mods { start, annotations: vec![] };
+            let mods = Mods { start, annotations: vec![], keywords: vec![] };
             let ty = self.ty()?;
             let vars = self.var_declarators(start, &mods, Some(ty))?;
             self.expect(";")?;
@@ -1768,7 +1770,7 @@ impl<'s> Parser<'s> {
             let name = self.ident()?;
             let name_pos = self.prev_start();
             let var_start = if has_mods { mods.start } else { ty.start };
-            let mods = if has_mods { mods } else { Mods { start: ty.start, annotations: vec![] } };
+            let mods = if has_mods { mods } else { Mods { start: ty.start, annotations: vec![], keywords: vec![] } };
             let var = VarDecl {
                 start: var_start,
                 end: self.prev_end,
@@ -2128,7 +2130,7 @@ fn inferred_param(start: usize, end: usize, name: String) -> VarDecl {
     VarDecl {
         start,
         end,
-        mods: Mods { start, annotations: vec![] },
+        mods: Mods { start, annotations: vec![], keywords: vec![] },
         ty: None,
         name,
         init: None,

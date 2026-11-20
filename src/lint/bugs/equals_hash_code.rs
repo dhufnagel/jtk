@@ -2,15 +2,15 @@
 //! OverrideBothEqualsAndHashcode).
 
 use super::shared_a::{class_bodies, is_varargs};
-use crate::lint::tree::{Context, has_modifier};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{K, MethodDecl, Tree};
+use jtk_parser::ast::{K, MethodDecl, Modifier, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     for members in class_bodies(tree) {
         let implemented = || {
             members.iter().filter_map(|m| match &m.kind {
-                K::Method(method) if is_implemented(method, context) => Some(&**method),
+                K::Method(method) if is_implemented(method) => Some(&**method),
                 _ => None,
             })
         };
@@ -26,9 +26,8 @@ pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) 
 }
 
 /// Abstract declarations do not implement the contract, so they count as missing.
-fn is_implemented(method: &MethodDecl, context: &Context) -> bool {
-    method.ret.is_some()
-        && (method.body.is_some() || has_modifier(&method.mods, context.text, context.tokens(), "native"))
+fn is_implemented(method: &MethodDecl) -> bool {
+    method.ret.is_some() && (method.body.is_some() || method.mods.has(Modifier::Native))
 }
 
 fn is_equals(method: &MethodDecl, text: &str) -> bool {

@@ -10,10 +10,9 @@
 use std::collections::HashSet;
 use std::ops::Range;
 
-use super::has_keyword;
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
-use jtk_parser::ast::{CaseKind, K, Tree};
+use jtk_parser::ast::{CaseKind, K, Modifier, Tree};
 
 /// Checks the variables declared in a block or `case` group.
 pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
@@ -38,7 +37,7 @@ fn check_statements<'t>(statements: &'t [Tree], context: &Context<'t>, diagnosti
     let allowed = context.options.declaration_usage_distance.allowed_distance;
     for (index, declaration) in statements.iter().enumerate() {
         let K::Vars(vars) = &declaration.kind else { continue };
-        if has_keyword(&vars[0].mods, vars[0].name_pos, "final", context) {
+        if vars[0].mods.has(Modifier::Final) {
             continue;
         }
         let names_used =

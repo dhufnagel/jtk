@@ -47,6 +47,8 @@ fn same_trees_for_constructs_with_tree_sitter_quirks() {
         "class A { A() { int x; this(1); } A(int x) { outer.super(); } A(long y) { <T>super(); } }",
         // An annotation as default value is also a return type annotation.
         "@interface A { B b() default @B(1); String[] c() default {}; }",
+        // Modifier keywords, including `non-sealed` and `sealed` as an identifier.
+        "sealed interface S permits A, B { default void f() {} } non-sealed class A implements S { protected static transient volatile int x; } final class B implements S { public synchronized native strictfp void g(); void h() { int sealed = 1; final var y = sealed; } }",
         // Records, enums, modules, patterns and the unnamed pattern.
         "record R<T>(@A int a, T... b) implements I { R { } }",
         "enum E implements I { A(1) { void f() {} }, B, ; int x; E() {} E(int x) {} }",

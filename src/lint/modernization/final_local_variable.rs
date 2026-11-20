@@ -9,9 +9,9 @@
 //! The fix adds `final` to variables alone in their declaration.
 use std::collections::HashMap;
 
-use crate::lint::tree::{Context, has_modifier};
+use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
-use jtk_parser::ast::{ClassKind, K, Tree};
+use jtk_parser::ast::{ClassKind, K, Modifier, Tree};
 
 use super::shared_a::assigned_name;
 
@@ -25,12 +25,11 @@ struct Collected<'t> {
 }
 
 pub fn check<'t>(unit: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
-    let text = context.text;
     let mut collected = Collected::default();
     collect(unit, 0, &mut collected);
     for (declaration, scope) in collected.declarations {
         let K::Vars(vars) = &declaration.kind else { continue };
-        if has_modifier(&vars[0].mods, text, context.tokens(), "final") {
+        if vars[0].mods.has(Modifier::Final) {
             continue;
         }
         for var in vars {

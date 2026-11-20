@@ -245,19 +245,25 @@ impl<'s> Converter<'s> {
     }
 
     fn mods(&self, n: &Node) -> R<Mods> {
-        let mut annotations = Vec::new();
-        let mut start = None;
-        for c in named_children(n) {
-            if c.kind() == "modifiers" {
-                start.get_or_insert(start_of(&c));
-                for a in named_children(&c) {
-                    if is_annotation(&a) {
-                        annotations.push(self.annotation(&a)?);
-                    }
-                }
+        let modifiers: Vec<Node> = named_children(n).into_iter().filter(|c| c.kind() == "modifiers").collect();
+        let start = modifiers.first().map_or(start_of(n), start_of);
+        let mut mods = Mods { start, annotations: vec![], keywords: vec![] };
+        for m in &modifiers {
+            self.add_modifiers(m, &mut mods)?;
+        }
+        Ok(mods)
+    }
+
+    /// Adds the annotations and modifier keywords of a `modifiers` node.
+    fn add_modifiers(&self, m: &Node, mods: &mut Mods) -> R<()> {
+        for c in all_children(m) {
+            if is_annotation(&c) {
+                mods.annotations.push(self.annotation(&c)?);
+            } else if let Some(modifier) = Modifier::from_keyword(self.text(&c)) {
+                mods.keywords.push((modifier, c.byte_range()));
             }
         }
-        Ok(Mods { start: start.unwrap_or(start_of(n)), annotations })
+        Ok(())
     }
 
     fn annotation(&self, n: &Node) -> R<Tree> {
@@ -516,7 +522,7 @@ impl<'s> Converter<'s> {
         Ok(VarDecl {
             start: start_of(n),
             end: n.end_byte(),
-            mods: Mods { start: start_of(n), annotations },
+            mods: Mods { start: start_of(n), annotations, keywords: vec![] },
             ty,
             name: name_parts.join("."),
             name_pos,
@@ -992,7 +998,7 @@ impl<'s> Converter<'s> {
                     let var = VarDecl {
                         start: start_of(n),
                         end: n.end_byte(),
-                        mods: Mods { start: start_of(n), annotations: vec![] },
+                        mods: Mods { start: start_of(n), annotations: vec![], keywords: vec![] },
                         ty: None,
                         name: self.text(&ch[0]).into(),
                         name_pos: ch[0].start_byte(),
@@ -1216,7 +1222,7 @@ impl<'s> Converter<'s> {
                             let var = VarDecl {
                                 start: mods.as_ref().map(|m| m.start).unwrap_or(ty.start),
                                 end: name.end_byte(),
-                                mods: mods.unwrap_or(Mods { start: ty.start, annotations: vec![] }),
+                                mods: mods.unwrap_or(Mods { start: ty.start, annotations: vec![], keywords: vec![] }),
                                 ty: Some(Box::new(ty)),
                                 name: self.text(&name).into(),
                                 name_pos: name.start_byte(),
@@ -1433,13 +1439,9 @@ impl<'s> Converter<'s> {
         // `x instanceof final Foo f`: the modifiers are a child of the instanceof expression.
         match named_children(n).into_iter().find(|c| c.kind() == "modifiers") {
             Some(m) => {
-                let mut annotations = Vec::new();
-                for a in named_children(&m) {
-                    if is_annotation(&a) {
-                        annotations.push(self.annotation(&a)?);
-                    }
-                }
-                Ok(Some(Mods { start: start_of(&m), annotations }))
+                let mut mods = Mods { start: start_of(&m), annotations: vec![], keywords: vec![] };
+                self.add_modifiers(&m, &mut mods)?;
+                Ok(Some(mods))
             }
             None => Ok(None),
         }
@@ -1449,7 +1451,7 @@ impl<'s> Converter<'s> {
         VarDecl {
             start: start_of(n),
             end: n.end_byte(),
-            mods: Mods { start: start_of(n), annotations: vec![] },
+            mods: Mods { start: start_of(n), annotations: vec![], keywords: vec![] },
             ty: None,
             name: self.text(n).into(),
             name_pos: n.start_byte(),

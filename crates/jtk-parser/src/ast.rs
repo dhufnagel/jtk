@@ -3,6 +3,8 @@
 //! The visitor is a port of `JavaInputAstVisitor`, which walks javac trees; a similar shape keeps it close to the
 //! original. The linter checks the same trees.
 
+use std::ops::Range;
+
 pub type B = Box<Tree>;
 
 #[derive(Debug, Clone)]
@@ -37,6 +39,73 @@ pub enum ClassKind {
 pub struct Mods {
     pub start: usize,
     pub annotations: Vec<Tree>,
+    /// The modifier keywords with their byte ranges, in source order.
+    pub keywords: Vec<(Modifier, Range<usize>)>,
+}
+
+impl Mods {
+    pub fn has(&self, modifier: Modifier) -> bool {
+        self.keywords.iter().any(|(m, _)| *m == modifier)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modifier {
+    Public,
+    Protected,
+    Private,
+    Static,
+    Abstract,
+    Final,
+    Native,
+    Synchronized,
+    Transient,
+    Volatile,
+    Strictfp,
+    Default,
+    Sealed,
+    NonSealed,
+}
+
+impl Modifier {
+    pub fn from_keyword(keyword: &str) -> Option<Modifier> {
+        Some(match keyword {
+            "public" => Modifier::Public,
+            "protected" => Modifier::Protected,
+            "private" => Modifier::Private,
+            "static" => Modifier::Static,
+            "abstract" => Modifier::Abstract,
+            "final" => Modifier::Final,
+            "native" => Modifier::Native,
+            "synchronized" => Modifier::Synchronized,
+            "transient" => Modifier::Transient,
+            "volatile" => Modifier::Volatile,
+            "strictfp" => Modifier::Strictfp,
+            "default" => Modifier::Default,
+            "sealed" => Modifier::Sealed,
+            "non-sealed" => Modifier::NonSealed,
+            _ => return None,
+        })
+    }
+
+    pub fn keyword(self) -> &'static str {
+        match self {
+            Modifier::Public => "public",
+            Modifier::Protected => "protected",
+            Modifier::Private => "private",
+            Modifier::Static => "static",
+            Modifier::Abstract => "abstract",
+            Modifier::Final => "final",
+            Modifier::Native => "native",
+            Modifier::Synchronized => "synchronized",
+            Modifier::Transient => "transient",
+            Modifier::Volatile => "volatile",
+            Modifier::Strictfp => "strictfp",
+            Modifier::Default => "default",
+            Modifier::Sealed => "sealed",
+            Modifier::NonSealed => "non-sealed",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -213,6 +282,8 @@ pub enum K {
         expr: B,
         index: B,
     },
+    /// Like javac, `-` directly before a decimal integer literal is part of the literal (`-1`, `-2147483648L`):
+    /// `2147483648` alone is no valid `int`. Other negations (`-1.0`, `-0x1`, `-x`) are `Unary`.
     Literal(LitKind),
     Binary {
         op: String,
