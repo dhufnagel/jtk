@@ -5,9 +5,9 @@
 //! As in Checkstyle, a variable that is only assigned (`e = null`) is unused; the fix (renaming the declaration to
 //! `_`) is only offered when the name does not occur at all.
 
-use crate::ast::{K, Tree, VarDecl};
 use crate::lint::tree::{Context, is_type_child};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree, VarDecl};
 
 use super::shared_b::is_variable_name;
 

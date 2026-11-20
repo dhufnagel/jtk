@@ -3,9 +3,9 @@
 //! As in Checkstyle, the public type (or else the first one) may stay; every other top-level type is reported.
 
 use super::{has_keyword, top_level_types};
-use crate::ast::Tree;
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::Tree;
 
 pub fn check(unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     if top_level_types(unit).nth(1).is_none() {

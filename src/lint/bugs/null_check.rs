@@ -10,9 +10,9 @@
 //! concatenate strings.
 
 use super::shared_b::{declared_type, for_each_in_same_code};
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::{Context, path_to, strip_parens};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
     let K::Binary { op: chain_operator, .. } = &tree.kind else { return };

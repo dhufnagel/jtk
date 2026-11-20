@@ -1,21 +1,26 @@
-[package]
-name = "jtk"
+[workspace]
+members = ["crates/jtk-parser"]
+
+[workspace.package]
 version = "0.4.0"
 edition = "2024"
-description = "Java toolkit: a fast Java formatter, compatible with palantir-java-format"
 license = "Apache-2.0"
+
+[package]
+name = "jtk"
+version.workspace = true
+edition.workspace = true
+description = "Java toolkit: a fast Java formatter, compatible with palantir-java-format"
+license.workspace = true
 
 [dependencies]
 globset = "0.4.21"
 ignore = "0.4.34"
 im-rc = "15.1.0"
+jtk-parser = { path = "crates/jtk-parser" }
 lsp-server = "0.10.0"
 lsp-types = "0.95.1"
 regex = "1.13.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 toml = "1.2.0"
-
-[dev-dependencies]
-tree-sitter = "0.27.2"
-tree-sitter-java-orchard = "0.5.25"

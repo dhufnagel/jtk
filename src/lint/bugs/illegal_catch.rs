@@ -2,9 +2,9 @@
 //! properties, PMD AvoidCatchingThrowable and AvoidCatchingGenericException): it also catches unexpected failures,
 //! which then go unnoticed.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 /// The type's name if it is one of `illegal` or the same in `java.lang`.
 pub fn illegal_name(ty: &Tree, text: &str, illegal: &[String]) -> Option<String> {

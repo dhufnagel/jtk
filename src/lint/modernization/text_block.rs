@@ -12,9 +12,9 @@
 //! Unsafe because the value only stays the same where the source has no line terminator other than `\n` escapes
 //! (always the case for literals) and the formatter keeps the text block's lines, which jtk's does.
 
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check(binary: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let is_concatenation = |t: &Tree| matches!(&t.kind, K::Binary { op, .. } if op == "+");

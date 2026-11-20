@@ -1,9 +1,9 @@
-//! A converter from tree-sitter's syntax tree into the AST of `jtk::ast`: the reference the hand-written parser is
+//! A converter from tree-sitter's syntax tree into the AST of `jtk_parser::ast`: the reference the hand-written parser is
 //! checked against (`tests/parser.rs`, `examples/parser_check.rs`). jtk itself no longer uses tree-sitter.
 
 #![allow(dead_code)]
 
-use jtk::ast::*;
+use jtk_parser::ast::*;
 use tree_sitter::{Node, Parser, Tree as TsTree};
 
 /// Parses Java source with tree-sitter.
@@ -90,16 +90,21 @@ fn start_of(n: &Node) -> usize {
     }
 }
 
-pub type ConvertError = jtk::formatter::FormatError;
+/// Why a tree could not be converted; the checks only tell success from failure, the message helps debugging.
+#[derive(Debug)]
+pub struct ConvertError(String);
+
+impl ConvertError {
+    fn new(message: impl Into<String>) -> ConvertError {
+        ConvertError(message.into())
+    }
+}
 
 type R<T> = Result<T, ConvertError>;
 
 fn err<T>(n: &Node, what: &str) -> R<T> {
-    Err(ConvertError::at(
-        n.start_position().row + 1,
-        n.start_position().column + 1,
-        format!("unsupported {what} '{}'", n.kind()),
-    ))
+    let position = n.start_position();
+    Err(ConvertError::new(format!("{}:{}: unsupported {what} '{}'", position.row + 1, position.column + 1, n.kind())))
 }
 
 /// `Node::child_by_field_name` looks the name up in the grammar on every call; field ids are cached instead.
@@ -135,7 +140,7 @@ impl<'s> Converter<'s> {
     pub fn compilation_unit(&self, root: &Node) -> R<Tree> {
         if root.has_error() {
             let error = first_error(root);
-            return Err(ConvertError::at_offset(self.src, error.start_byte(), "syntax error"));
+            return Err(ConvertError::new(format!("syntax error at byte {}", error.start_byte())));
         }
         let mut package = None;
         let mut imports = Vec::new();

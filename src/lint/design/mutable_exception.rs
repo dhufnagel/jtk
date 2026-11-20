@@ -6,9 +6,9 @@
 //! exception.
 
 use super::has_keyword;
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::{Context, for_each_descendant};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Class(class) = &tree.kind else { return };

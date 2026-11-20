@@ -5,9 +5,9 @@
 //!   the compiler infers it. As in Checkstyle, types are compared by simple name with all classes, interfaces, enums
 //!   and records of the file. The fix removes the clause.
 
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::{Context, for_each_descendant, has_modifier};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 pub fn missing_permits(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Class(class) = &tree.kind else { return };

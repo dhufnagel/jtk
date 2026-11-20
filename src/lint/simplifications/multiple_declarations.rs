@@ -5,9 +5,9 @@
 //! The fix splits a declaration into one per variable, each with the modifiers, annotations and type; array
 //! dimensions after a name move to its type. Declarations with comments inside are not split.
 
-use crate::ast::{K, Tree, VarDecl};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree, VarDecl};
 
 pub fn check(container: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     match &container.kind {

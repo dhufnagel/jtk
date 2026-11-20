@@ -7,9 +7,9 @@
 
 use std::collections::HashSet;
 
-use crate::ast::{K, Tree};
 use crate::input::{Tok, build_toks_until};
 use crate::newlines;
+use jtk_parser::ast::{K, Tree};
 
 // ------------------------------------------------------------------------------------------------------------------
 // Ordering
@@ -232,7 +232,7 @@ pub fn remove_unused_imports(contents: &str) -> String {
 /// (whose syntax tree is already cached) and applied to the formatted output with [`remove_imports`].
 pub fn used_import_names(source: &str) -> Option<HashSet<String>> {
     // Syntax errors are reported by the formatter.
-    let unit = crate::parser::parse_cached(source).ok()?;
+    let unit = jtk_parser::parser::parse_cached(source).ok()?;
     Some(used_import_names_in(&unit, source))
 }
 
@@ -295,9 +295,9 @@ fn used_import_names_in(unit: &Tree, source: &str) -> HashSet<String> {
     walk(unit, &candidates, &mut used);
     // Documentation comments, except inside import declarations.
     let import_ranges: Vec<(usize, usize)> = imports.iter().map(|i| (i.start, i.end)).collect();
-    if let Ok((raw, _)) = crate::input::lex(source, false) {
+    if let Ok((raw, _)) = jtk_parser::lexer::lex(source, false) {
         for (kind, start, end) in raw {
-            if !matches!(kind, crate::input::RawKind::Comment)
+            if !matches!(kind, jtk_parser::lexer::RawKind::Comment)
                 || import_ranges.iter().any(|&(s, e)| s <= start && end <= e)
             {
                 continue;

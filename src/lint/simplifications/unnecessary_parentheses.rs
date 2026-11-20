@@ -4,9 +4,9 @@
 //! tighter than the one around it (`(a && b) || c`). Like Checkstyle, associativity is not considered: `(a + b) + c`
 //! is not reported.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     match &tree.kind {
@@ -140,7 +140,7 @@ fn precedence(operator: &str) -> u8 {
 /// `(x) -> ...`: a single parameter without type needs no parentheses.
 fn check_lambda_parameter(
     lambda: &Tree,
-    params: &[crate::ast::VarDecl],
+    params: &[jtk_parser::ast::VarDecl],
     context: &Context,
     diagnostics: &mut Vec<Diagnostic>,
 ) {

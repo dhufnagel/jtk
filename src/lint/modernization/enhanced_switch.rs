@@ -13,10 +13,10 @@
 
 use std::ops::Range;
 
-use crate::ast::{Case, CaseKind, K, Tree};
 use crate::lint::bugs::fall_through::ends_case;
 use crate::lint::tree::{Context, Tokens};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{Case, CaseKind, K, Tree};
 
 pub fn check(switch: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let (K::Switch { selector, cases } | K::SwitchExpr { selector, cases }) = &switch.kind else { return };

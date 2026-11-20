@@ -1,6 +1,6 @@
 //! Helpers on the AST shared by several rules of the group.
 
-use crate::ast::{ClassKind, K, LitKind, Tree, VarDecl};
+use jtk_parser::ast::{ClassKind, K, LitKind, Tree, VarDecl};
 
 /// Calls `f` on each descendant of `tree` in source order, without entering lambdas and class bodies (which are
 /// visited themselves): code there runs in a different context. Like tree-sitter's `class_body`, the bodies of

@@ -3,9 +3,9 @@
 //!
 //! Fixed when no operand with possible side effects is dropped: `b == true` is `b`, but `f() || true` stays.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::{Context, is_boolean_literal, negation, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 const MESSAGE: &str = "Boolean expression can be simplified";
 

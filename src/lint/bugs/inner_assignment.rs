@@ -6,9 +6,9 @@
 //! of a comparison in a loop condition (`while ((line = r.readLine()) != null)`), also combined with `&&`, `||`,
 //! `&`, `|` and `!`. An assignment statement after a label is reported, as in Checkstyle.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Assign { lhs, rhs, .. } = &tree.kind else { return };

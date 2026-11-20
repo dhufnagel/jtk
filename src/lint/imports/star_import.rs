@@ -3,9 +3,9 @@
 //! package can break the code.
 
 use super::{imported_name, is_on_demand, last_dot};
-use crate::ast::Tree;
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::Tree;
 
 pub fn check(import: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     if is_on_demand(import) {

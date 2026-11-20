@@ -5,9 +5,9 @@
 //! As in Checkstyle, a loop counts as ending the `case` if its body ends in `return` or `throw`, or if it is an
 //! infinite loop without `break`.
 
-use crate::ast::{Case, CaseKind, K, Tree};
 use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{Case, CaseKind, K, Tree};
 
 /// Checkstyle's default relief pattern `falls?[ -]?thr(u|ough)`, spelled out.
 const RELIEF_COMMENTS: &[&str] = &[

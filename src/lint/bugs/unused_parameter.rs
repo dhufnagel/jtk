@@ -8,9 +8,9 @@
 //! name that shadows the parameter counts as a use of it.
 
 use super::shared_b::is_name_reference_in;
-use crate::ast::{K, MethodDecl, Tree};
 use crate::lint::tree::{Context, has_modifier, in_type, path_to};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, MethodDecl, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Method(method) = &tree.kind else { return };

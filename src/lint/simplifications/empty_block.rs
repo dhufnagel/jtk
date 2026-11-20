@@ -3,9 +3,9 @@
 //! initializers. A block with only a comment counts as empty, one with only `;` does not. Empty `catch` blocks are
 //! B003's.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let blocks: Vec<&Tree> = match &tree.kind {

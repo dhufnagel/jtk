@@ -21,9 +21,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{ClassDecl, ClassKind, K, MethodDecl, Tree, VarDecl};
 use crate::lint::tree::{Context, has_modifier, is_type_child};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{ClassDecl, ClassKind, K, MethodDecl, Tree, VarDecl};
 
 pub fn check<'t>(unit: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
     let mut analysis = Analysis {

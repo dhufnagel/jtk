@@ -1,6 +1,5 @@
 //! jtk, a Java toolkit. Its formatter is a Rust port of palantir-java-format, with byte-identical output.
 
-pub mod ast;
 pub mod cli;
 pub mod comments;
 pub mod config;
@@ -15,7 +14,6 @@ pub mod modifiers;
 pub mod newlines;
 pub mod ops;
 pub mod output;
-pub mod parser;
 pub mod string_wrapper;
 pub mod visitor;
 

@@ -20,7 +20,7 @@ use std::cell::RefCell;
 
 use super::tree::{Context, TreeCheck};
 use super::{Diagnostic, Rule, RuleOptions};
-use crate::ast::{ClassKind, K, Tag, Tree};
+use jtk_parser::ast::{ClassKind, K, Tag, Tree};
 
 /// The checks on the AST, with the kinds of trees each checks.
 pub(super) const TREE_CHECKS: &[(Rule, &[Tag], TreeCheck)] = &[

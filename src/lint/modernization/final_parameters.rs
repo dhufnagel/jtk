@@ -3,9 +3,9 @@
 //! are skipped; lambda, `catch` and record parameters are not checked. The fix adds `final`, unless the body assigns
 //! the name (then the parameter is reported, as by Checkstyle, but `final` would not compile).
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::{Context, for_each_descendant, has_modifier};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 use super::shared_a::assigned_name;
 

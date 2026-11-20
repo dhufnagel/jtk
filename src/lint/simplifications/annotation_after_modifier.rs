@@ -8,9 +8,9 @@
 
 use std::ops::Range;
 
-use crate::ast::{ClassKind, K, Mods, Tree};
 use crate::lint::tree::{Context, modifier_keywords};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{ClassKind, K, Mods, Tree};
 
 use super::removal_range;
 

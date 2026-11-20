@@ -294,12 +294,19 @@ dependencies = [
  "globset",
  "ignore",
  "im-rc",
+ "jtk-parser",
  "lsp-server",
  "lsp-types",
  "regex",
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "jtk-parser"
+version = "0.4.0"
+dependencies = [
  "tree-sitter",
  "tree-sitter-java-orchard",
 ]

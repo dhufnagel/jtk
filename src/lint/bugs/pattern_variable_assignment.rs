@@ -11,9 +11,9 @@
 //! Checkstyle only finds one assignment per parent node, so of `c ? (s = a) : (s = b)` only the first; jtk reports
 //! both.
 
-use crate::ast::{CaseKind, K, Tree};
 use crate::lint::tree::{Context, for_each_descendant};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{CaseKind, K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let (cond, then, alternative) = match &tree.kind {

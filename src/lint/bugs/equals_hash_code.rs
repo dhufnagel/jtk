@@ -2,9 +2,9 @@
 //! OverrideBothEqualsAndHashcode).
 
 use super::shared_a::{class_bodies, is_varargs};
-use crate::ast::{K, MethodDecl, Tree};
 use crate::lint::tree::{Context, has_modifier};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, MethodDecl, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     for members in class_bodies(tree) {

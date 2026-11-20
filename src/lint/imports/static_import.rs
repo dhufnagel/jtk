@@ -2,9 +2,9 @@
 //! properties): the member reads as if it were declared in the class.
 
 use super::{imported_name, last_dot};
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(import: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     if matches!(import.kind, K::Import { is_static: true, .. }) {

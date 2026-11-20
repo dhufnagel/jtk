@@ -2,9 +2,9 @@
 //! (Checkstyle AvoidDoubleBraceInitialization, PMD DoubleBraceInitialization): it creates a class per use and keeps
 //! a reference to the enclosing instance.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::NewClass { ident, args, body: Some(members), .. } = &tree.kind else { return };

@@ -10,9 +10,9 @@
 
 use std::ops::Range;
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 /// Checks the declarations in a compilation unit, class body or anonymous class body.
 pub fn check(container: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {

@@ -3,9 +3,9 @@
 //! Unsafe fix: `x == null` (Eclipse's quick fix). It changes the behaviour where `x` is null (no exception) or its
 //! `equals` breaks the contract.
 
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::MethodInvocation { select, type_args, args } = &tree.kind else { return };

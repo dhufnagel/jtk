@@ -6,8 +6,8 @@
 //! classes only for those.
 
 use super::is_method_like;
-use crate::ast::{K, Tree};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub struct Cyclomatic {
     max: u64,

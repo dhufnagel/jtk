@@ -7,9 +7,9 @@
 //! variables in one declaration, array initializers, lambdas, method references, `null` and other literals (`long
 //! x = 1` would become `int`). Eclipse also converts other values whose type it knows from type information.
 
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
     let K::Vars(vars) = &tree.kind else { return };

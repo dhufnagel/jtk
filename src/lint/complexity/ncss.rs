@@ -9,10 +9,10 @@
 //! to the enclosing method, class (not interface or enum), record and the file.
 
 use super::{file_position, is_annotation_type, is_method_like};
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::options::JavaNcss;
 use crate::lint::tree::{Context, has_modifier};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 pub struct Ncss {
     limits: JavaNcss,

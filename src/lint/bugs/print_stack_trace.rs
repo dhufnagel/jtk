@@ -4,9 +4,9 @@
 //! PMD checks with type information that `printStackTrace()` is `Throwable`'s method and that `System` is
 //! `java.lang.System`; without types, any `printStackTrace()` without arguments counts, and `System` is taken by name.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::MethodInvocation { select, args, .. } = &tree.kind else { return };

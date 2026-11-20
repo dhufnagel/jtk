@@ -5,9 +5,9 @@
 //! source files (with top-level methods) are not checked.
 
 use super::{has_keyword, top_level_types};
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let Some(path) = context.path else { return };

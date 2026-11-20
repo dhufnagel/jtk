@@ -5,9 +5,9 @@
 //! The fix removes the statement (its whole line if it is alone on it) when it is in a block or a `case` group;
 //! elsewhere (`if (a) return;`) removing it would leave a statement without body.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 use super::line_removal;
 

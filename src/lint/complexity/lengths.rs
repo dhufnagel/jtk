@@ -6,9 +6,9 @@
 //! - C009: an anonymous class body (Checkstyle AnonInnerLength).
 
 use super::{line_span, token_after, token_before};
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check_method(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Method(method) = &tree.kind else { return };

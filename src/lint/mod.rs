@@ -333,7 +333,7 @@ fn lint_on_current_thread(
     path: Option<&Path>,
     settings: &Settings,
 ) -> Result<Vec<Diagnostic>, FormatError> {
-    let unit = crate::parser::parse_cached(text)
+    let unit = jtk_parser::parser::parse_cached(text)
         .map_err(|error| FormatError::at_offset(text, error.offset, "syntax error"))?;
     let mut diagnostics = Vec::new();
     let mut context = tree::Context::new(text, &settings.options, path);

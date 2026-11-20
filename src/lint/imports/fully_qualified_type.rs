@@ -23,9 +23,9 @@
 use std::collections::{HashMap, HashSet};
 
 use super::{import_name, imported_name};
-use crate::ast::{K, Tree};
 use crate::lint::tree::{Context, is_type_child};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let mut file = FileTypes::default();

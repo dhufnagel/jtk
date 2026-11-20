@@ -5,9 +5,9 @@
 //!
 //! The fix rewrites the literal in that case.
 
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Literal(kind) = tree.kind else { return };

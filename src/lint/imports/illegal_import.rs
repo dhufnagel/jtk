@@ -2,9 +2,9 @@
 //! DontImportSun): they are JDK internals that can change or disappear in any release.
 
 use super::imported_name;
-use crate::ast::Tree;
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::Tree;
 
 pub fn check(import: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let name = imported_name(import, context.text);

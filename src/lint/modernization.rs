@@ -19,7 +19,7 @@ mod use_var;
 mod when_guard;
 
 use super::Rule;
-use crate::ast::Tag;
+use jtk_parser::ast::Tag;
 
 /// The checks on the AST, with the kinds of trees each checks.
 pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[

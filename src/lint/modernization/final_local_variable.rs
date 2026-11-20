@@ -9,9 +9,9 @@
 //! The fix adds `final` to variables alone in their declaration.
 use std::collections::HashMap;
 
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::{Context, has_modifier};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 use super::shared_a::assigned_name;
 

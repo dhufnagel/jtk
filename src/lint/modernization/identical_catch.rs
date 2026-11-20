@@ -13,9 +13,9 @@
 
 use std::ops::Range;
 
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::{Context, Tokens, for_each_descendant};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 use super::shared_b::for_each_variable_name;
 
@@ -80,7 +80,7 @@ struct Catch<'t> {
 }
 
 impl<'t> Catch<'t> {
-    fn new(catch: &'t crate::ast::Catch, context: &Context) -> Option<Catch<'t>> {
+    fn new(catch: &'t jtk_parser::ast::Catch, context: &Context) -> Option<Catch<'t>> {
         let name = catch.param.name.as_str();
         let types = catch.param.ty.as_deref()?;
         let body = &*catch.block;

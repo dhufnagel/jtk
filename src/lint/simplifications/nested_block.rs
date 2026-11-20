@@ -1,9 +1,9 @@
 //! S018: blocks nested directly in other blocks (Checkstyle AvoidNestedBlocks with the default
 //! `allowInSwitchCase=false`, so also `case 1: { ... }`), which usually only limit the scope of variables.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(container: &Tree, _context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     match &container.kind {

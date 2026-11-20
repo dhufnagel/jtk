@@ -1,9 +1,9 @@
 //! S001: control statement body without braces (Checkstyle NeedBraces, PMD ControlStatementBraces, Eclipse "Use
 //! blocks"). `else if` is allowed.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(statement: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let (keyword, bodies): (&str, [Option<&Tree>; 2]) = match &statement.kind {

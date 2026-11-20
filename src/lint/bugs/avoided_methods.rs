@@ -4,9 +4,9 @@
 //! As in Checkstyle, only the overloads without parameters count, in any type including interfaces, and the
 //! violation is reported where the declaration starts (at its annotations, if any).
 
-use crate::ast::{ClassKind, K, MethodDecl, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, MethodDecl, Tree};
 
 pub fn check_finalizer(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     if declared_method(tree, context).is_some_and(|m| is_parameterless(m, "finalize")) {

@@ -4,9 +4,9 @@
 
 use std::ops::Range;
 
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::{Context, Tokens};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 const AFTER_MEMBER: &str = "Unnecessary semicolon after member declaration";
 

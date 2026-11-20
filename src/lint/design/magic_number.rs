@@ -10,9 +10,9 @@
 //! Unlike Checkstyle without its suppression filter, jtk honours `@SuppressWarnings("MagicNumber")`.
 
 use super::has_keyword;
-use crate::ast::{ClassKind, K, LitKind, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, LitKind, Tree};
 
 pub fn check(number: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     if !matches!(number.kind, K::Literal(LitKind::Int | LitKind::Long | LitKind::Float | LitKind::Double)) {

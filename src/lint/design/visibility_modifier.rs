@@ -5,9 +5,9 @@
 //! and annotation constants are not fields in this sense.
 
 use super::{has_keyword, qualified_name, simple_name, single_type_imports};
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 /// The annotations that make a field visible on purpose.
 const IGNORED_ANNOTATIONS: &[&str] =

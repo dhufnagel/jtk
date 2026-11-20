@@ -1,4 +1,4 @@
-//! The checks of all rules run on the javac-shaped AST of [`crate::ast`] that the hand-written parser builds, with
+//! The checks of all rules run on the javac-shaped AST of [`jtk_parser::ast`] that the hand-written parser builds, with
 //! the file's tokens and comments for what the tree leaves out. This module walks the tree and holds what the
 //! checks share.
 
@@ -6,9 +6,9 @@ use std::cell::OnceCell;
 use std::ops::Range;
 use std::path::Path;
 
-use crate::ast::{K, LitKind, Mods, Tag, Tree};
-use crate::input::{RawKind, lex};
 use crate::lint::{Diagnostic, Rule, RuleOptions, Selection};
+use jtk_parser::ast::{K, LitKind, Mods, Tag, Tree};
+use jtk_parser::lexer::{RawKind, lex};
 
 /// What a check sees besides the tree it checks.
 pub(super) struct Context<'t> {
@@ -283,7 +283,7 @@ pub(super) fn path_to(root: &Tree, range: Range<usize>) -> Vec<&Tree> {
 /// expression.
 pub(super) fn is_type_child(parent: &Tree, child: &Tree) -> bool {
     let is = |t: &Tree| std::ptr::eq(t, child);
-    let var_type = |v: &crate::ast::VarDecl| v.ty.as_deref().is_some_and(is);
+    let var_type = |v: &jtk_parser::ast::VarDecl| v.ty.as_deref().is_some_and(is);
     match &parent.kind {
         K::CompilationUnit { package, .. } => package.as_ref().is_some_and(|(_, name)| is(name)),
         K::Import { .. } | K::Module { .. } | K::Directive { .. } | K::Requires { .. } | K::Uses { .. } => true,

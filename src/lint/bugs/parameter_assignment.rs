@@ -5,9 +5,9 @@
 //! local and anonymous classes in it; the components of a record are not parameters of its compact constructor.
 
 use super::shared_a::modified_name;
-use crate::ast::{K, Tree, VarDecl};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree, VarDecl};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let (parameters, body): (&[VarDecl], &Tree) = match &tree.kind {

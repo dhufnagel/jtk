@@ -2,9 +2,9 @@
 //! AbstractClassWithoutAbstractMethod). A class that has supertypes may leave their abstract methods unimplemented.
 
 use super::has_keyword;
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Class(class) = &tree.kind else { return };

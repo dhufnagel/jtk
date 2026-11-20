@@ -8,8 +8,8 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{K, LitKind, Tree, VarDecl};
 use crate::newlines::{self, jlen};
+use jtk_parser::ast::{K, LitKind, Tree, VarDecl};
 
 const TEXT_BLOCK_DELIMITER: &str = "\"\"\"";
 
@@ -266,7 +266,7 @@ fn strip_indent(s: &str) -> String {
 
 fn reflow_replacements(column_limit: usize, input: &str) -> Replacements {
     // Syntax errors are reported by the formatter.
-    let Ok(unit) = crate::parser::parse_cached(input) else {
+    let Ok(unit) = jtk_parser::parser::parse_cached(input) else {
         return Vec::new();
     };
     let reflower = Reflower {

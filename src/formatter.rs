@@ -11,7 +11,8 @@ use crate::lint::{self, Diagnostic, Settings};
 use crate::ops::OpsBuilder;
 use crate::output::{JavaOutput, Replacement};
 use crate::visitor::Visitor;
-use crate::{imports, modifiers, parser, string_wrapper};
+use crate::{imports, modifiers, string_wrapper};
+use jtk_parser::parser;
 
 /// Line length and indentation. Only the Palantir style is offered on the command line; the Google style's numbers
 /// are used to run upstream tests that were written for it.

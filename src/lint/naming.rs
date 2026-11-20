@@ -23,7 +23,7 @@ mod illegal_identifier;
 
 use super::tree::{Context, TreeCheck, modifier_keywords};
 use super::{Diagnostic, Rule};
-use crate::ast::{ClassKind, K, Mods, Tag, Tree, VarDecl};
+use jtk_parser::ast::{ClassKind, K, Mods, Tag, Tree, VarDecl};
 
 /// The formats, as Checkstyle's regular expressions spell them.
 #[derive(Clone, Copy)]

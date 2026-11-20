@@ -7,9 +7,9 @@
 //!   with `@Override`.
 
 use super::{file_position, token_before};
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::{Context, has_modifier};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 pub fn check_parameters(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Method(method) = &tree.kind else { return };

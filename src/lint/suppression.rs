@@ -10,7 +10,7 @@
 
 use std::ops::Range;
 
-use crate::ast::{EnumConstant, K, LitKind, Mods, Tree, VarDecl};
+use jtk_parser::ast::{EnumConstant, K, LitKind, Mods, Tree, VarDecl};
 
 use super::tree::{Tokens, for_each_descendant};
 use super::{Diagnostic, Rule};

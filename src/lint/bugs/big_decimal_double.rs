@@ -7,9 +7,9 @@
 //! `floatValue()`, `Double.parseDouble` and the `Math` functions that only return `double`.
 
 use super::shared_b::declared_type;
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::{Context, path_to, strip_parens};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
     let K::NewClass { ident, args, .. } = &tree.kind else { return };

@@ -1,6 +1,6 @@
 //! Helpers on the AST shared by several rules of the group.
 
-use crate::ast::{K, Tree, VarDecl};
+use jtk_parser::ast::{K, Tree, VarDecl};
 
 /// Calls `f` on each descendant of `tree` that runs in the same context as it, in source order: not in lambdas or
 /// class bodies (local, anonymous and enum constant classes). Annotations are skipped too: their `k = v` arguments
@@ -51,7 +51,7 @@ pub(super) fn class_bodies(tree: &Tree) -> Vec<&[Tree]> {
     let mut bodies = Vec::new();
     match &tree.kind {
         K::Class(class) => {
-            if !matches!(class.kind, crate::ast::ClassKind::Interface | crate::ast::ClassKind::Annotation) {
+            if !matches!(class.kind, jtk_parser::ast::ClassKind::Interface | jtk_parser::ast::ClassKind::Annotation) {
                 bodies.push(class.members.as_slice());
             }
             bodies.extend(class.enum_constants.iter().filter_map(|c| c.body.as_deref()));

@@ -7,9 +7,9 @@
 //! `if` block, and the tested expression is a name or field, so that casting it again gives the same object. The
 //! rest of the condition must not use the variable's name, which would then refer to the pattern variable.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::{Context, modifier_keywords, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(statement: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::If { cond, then, .. } = &statement.kind else { return };
@@ -59,7 +59,7 @@ fn names_after(condition: &Tree, position: usize, name: &str, context: &Context)
 }
 
 /// `T name = (T) x;`: the cast's type and operand.
-fn cast<'a>(var: &crate::ast::VarDecl, context: &Context<'a>) -> Option<(&'a str, &'a str)> {
+fn cast<'a>(var: &jtk_parser::ast::VarDecl, context: &Context<'a>) -> Option<(&'a str, &'a str)> {
     let K::Cast { ty, expr } = &strip_parens(var.init.as_deref()?).kind else { return None };
     let cast_type = context.source(ty);
     let declared_type = var.ty.as_deref().map_or("var", |t| context.source(t));

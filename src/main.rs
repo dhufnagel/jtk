@@ -23,7 +23,7 @@ fn main() -> ExitCode {
 fn debug_tree() -> ExitCode {
     let mut input = String::new();
     std::io::stdin().read_to_string(&mut input).unwrap();
-    match jtk::parser::parse(&input) {
+    match jtk_parser::parser::parse(&input) {
         Ok(tree) => {
             println!("{tree:#?}");
             ExitCode::SUCCESS

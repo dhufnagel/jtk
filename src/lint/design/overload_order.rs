@@ -9,9 +9,9 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let (members, has_constructors) = match &tree.kind {

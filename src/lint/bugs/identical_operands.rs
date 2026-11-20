@@ -3,9 +3,9 @@
 //! compared, as other operands may have side effects or be deliberate constants. `x != x` tests for NaN, but
 //! `Double.isNaN` says so, so it is reported too.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 const OPERATORS: &[&str] = &["==", "!=", "<", "<=", ">", ">=", "&&", "||", "&", "|", "^"];
 

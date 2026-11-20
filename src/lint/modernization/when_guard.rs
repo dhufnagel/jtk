@@ -7,9 +7,9 @@
 //! the next cases instead of doing nothing. The condition may only name the pattern variables: a guard cannot use
 //! local variables that are not effectively final.
 
-use crate::ast::{Case, CaseKind, K, Tree};
 use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{Case, CaseKind, K, Tree};
 
 use super::shared_b::for_each_variable_name;
 

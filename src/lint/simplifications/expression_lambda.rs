@@ -6,9 +6,9 @@
 //! (`submit(Callable)` instead of `submit(Runnable)`). For the same reason it is skipped for lambdas with implicitly
 //! typed parameters returning a method call, assignment or object creation, where it can make a call ambiguous.
 
-use crate::ast::{K, Tree, VarDecl};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree, VarDecl};
 
 pub fn check(lambda: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Lambda { params, body } = &lambda.kind else { return };

@@ -2,9 +2,9 @@
 
 use super::modified_control_variable::loop_variables;
 use super::shared_a::modified_name;
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::For { update, .. } = &tree.kind else { return };

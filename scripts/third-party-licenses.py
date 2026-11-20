@@ -32,8 +32,8 @@ def runtime_packages(target):
         for dep in nodes[pid]["deps"]:
             if any(kind["kind"] is None for kind in dep["dep_kinds"]):
                 stack.append(dep["pkg"])
-    root = packages[meta["resolve"]["root"]]["name"]
-    return sorted((packages[p] for p in seen if packages[p]["name"] != root), key=lambda p: p["name"])
+    own = set(meta["workspace_members"])
+    return sorted((packages[p] for p in seen if p not in own), key=lambda p: p["name"])
 
 
 def license_files(package):

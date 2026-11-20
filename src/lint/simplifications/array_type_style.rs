@@ -7,9 +7,9 @@
 
 use std::ops::Range;
 
-use crate::ast::{K, Tree, VarDecl};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree, VarDecl};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     match &tree.kind {

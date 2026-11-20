@@ -13,9 +13,9 @@
 use std::ptr;
 
 use super::{is_annotation_type, is_constructor_call, token_after, token_before};
-use crate::ast::{Case, K, Tree};
 use crate::lint::tree::{Context, has_modifier};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{Case, K, Tree};
 
 pub struct BooleanExpression {
     max: u32,

@@ -1,9 +1,9 @@
 //! S002: `if (c) return true; else return false;` (Checkstyle SimplifyBooleanReturn, PMD SimplifyBooleanReturns):
 //! can be `return c;`. Fixed when the two literals differ.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::{Context, is_boolean_literal, negation, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::If { cond, then, else_: Some(alternative) } = &tree.kind else { return };

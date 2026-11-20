@@ -7,9 +7,9 @@
 //! or other method (also of a nested class) does not.
 
 use super::avoided_methods::{declared_method, is_parameterless};
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::{Context, has_modifier};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let Some(method) = declared_method(tree, context) else { return };

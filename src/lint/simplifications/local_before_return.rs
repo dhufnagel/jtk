@@ -8,9 +8,9 @@
 
 use std::ops::Range;
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(statement: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Return(Some(value)) = &statement.kind else { return };

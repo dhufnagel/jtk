@@ -6,14 +6,14 @@
 
 use std::collections::VecDeque;
 
-use crate::ast::{
-    Case, CaseKind, Catch, ClassDecl, ClassKind, EnumConstant, K, LitKind, MethodDecl, Mods, Tree, VarDecl,
-};
 use crate::doc::{
     BreakBehaviour, BreakDoc, BreakTag, FillMode, Indent, LastLevelBreakability, Op, OpenOp, PartialInlineability,
     RealOrImaginary,
 };
 use crate::ops::{BlankLineWanted, OpsBuilder};
+use jtk_parser::ast::{
+    Case, CaseKind, Catch, ClassDecl, ClassKind, EnumConstant, K, LitKind, MethodDecl, Mods, Tree, VarDecl,
+};
 
 const METHOD_CHAIN_COLUMN_LIMIT: i32 = 80;
 const ANNOTATION_RECORD_PARAMETER_COLUMN_LIMIT: i32 = 60;

@@ -3,9 +3,9 @@
 //! A block with only `;` counts as empty. A comment in the block, or naming the exception like PMD's defaults
 //! (`ignored`, `expected`) or `_`, documents that the exception is swallowed on purpose.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 const INTENTIONAL_NAMES: &[&str] = &["ignored", "expected", "_"];
 

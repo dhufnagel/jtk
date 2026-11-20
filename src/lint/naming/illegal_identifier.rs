@@ -2,9 +2,9 @@
 //! `^(?!var$|\S*\$)\S+$`). Checks the names of types, methods, annotation elements, enum constants, fields,
 //! variables, parameters (also of lambdas), record components and pattern variables.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 const PATTERN: &str = r"^(?!var$|\S*\$)\S+$";
 

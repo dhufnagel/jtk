@@ -4,9 +4,9 @@
 //! The fix joins the conditions, parenthesizing those whose operators bind less tightly than `&&` (`||`, `?:`,
 //! assignments), and keeps the inner statement. It is left out if a comment outside the inner statement would be lost.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(outer: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::If { cond: outer_condition, then, else_: None } = &outer.kind else { return };

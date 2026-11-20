@@ -11,9 +11,9 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use super::has_keyword;
-use crate::ast::{CaseKind, K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{CaseKind, K, Tree};
 
 /// Checks the variables declared in a block or `case` group.
 pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {

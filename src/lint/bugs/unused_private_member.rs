@@ -15,9 +15,9 @@ use std::cell::OnceCell;
 use std::collections::HashSet;
 
 use super::shared_b::{is_name_reference_in, is_side_effect_free, is_simple_literal};
-use crate::ast::{ClassKind, K, LitKind, Mods, Tree, VarDecl};
 use crate::lint::tree::{Context, for_each_descendant, has_modifier, is_type_child};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{ClassKind, K, LitKind, Mods, Tree, VarDecl};
 
 const SERIALIZATION_FIELDS: &[&str] = &["serialVersionUID", "serialPersistentFields"];
 const SERIALIZATION_METHODS: &[&str] =

@@ -2,9 +2,9 @@
 //! `case Box<String>(var s)` can be `case Box(var s)`, the compiler infers them. As in Checkstyle, only wildcards
 //! (`Box<?>`) are accepted.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(pattern: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::RecordPattern { ty, .. } = &pattern.kind else { return };

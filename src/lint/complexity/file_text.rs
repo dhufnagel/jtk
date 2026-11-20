@@ -4,9 +4,9 @@
 //! As in Checkstyle, lines end at `\n`, `\r\n` or `\r`, and a line terminator at the end of the file does not start
 //! another line.
 
-use crate::ast::Tree;
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::Tree;
 
 pub fn check_file_length(_unit: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let max = context.options.file_length.max as usize;

@@ -4,9 +4,9 @@
 //! The fix removes the call, but only as the first statement: since Java 25, statements may precede it, and they
 //! would then run after the implicit call.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 use super::line_removal;
 

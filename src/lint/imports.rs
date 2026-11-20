@@ -7,7 +7,7 @@ mod static_import;
 
 use super::Rule;
 use super::tree::{Context, TreeCheck};
-use crate::ast::{K, Tag, Tree};
+use jtk_parser::ast::{K, Tag, Tree};
 
 /// The checks on the AST, with the kinds of trees each checks.
 pub(super) const TREE_CHECKS: &[(Rule, &[Tag], TreeCheck)] = &[

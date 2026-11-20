@@ -6,8 +6,8 @@
 //! - C015: `for` loops (Checkstyle NestedForDepth),
 //! - C016: `try` statements (Checkstyle NestedTryDepth).
 
-use crate::ast::{K, Tree};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 /// Reports the statements that `nests` accepts nested in more than `max` others.
 pub struct NestingDepth {

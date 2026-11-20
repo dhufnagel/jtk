@@ -8,9 +8,9 @@
 //! fine), and only the literal is fixed: `new String(null)` throws. `new Float(x)` is only fixed if `x` cannot be a
 //! `double`, which `Float.valueOf` does not accept.
 
-use crate::ast::{ClassKind, K, LitKind, Tree, VarDecl};
 use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{ClassKind, K, LitKind, Tree, VarDecl};
 
 const WRAPPERS: &[&str] = &["Integer", "Long", "Short", "Byte", "Character", "Double", "Float"];
 

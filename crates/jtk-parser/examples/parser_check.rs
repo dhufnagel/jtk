@@ -45,7 +45,7 @@ fn check(files: &[PathBuf]) -> i32 {
             .and_then(|tree| converter::Converter { src: &text }.compilation_unit(&tree.root_node()).ok());
         tree_sitter_time += start.elapsed();
         let start = Instant::now();
-        let own = jtk::parser::parse(&text).ok();
+        let own = jtk_parser::parser::parse(&text).ok();
         own_time += start.elapsed();
         match (converted, own) {
             (Some(a), Some(b)) => {

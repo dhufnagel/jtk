@@ -5,9 +5,9 @@
 //! text block), and only the first constant of a `case` is checked for `null` (`case null, default` but not
 //! `case "a", null`).
 
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::{Context, for_each_descendant};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let (K::Switch { cases, .. } | K::SwitchExpr { cases, .. }) = &tree.kind else { return };

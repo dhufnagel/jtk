@@ -8,9 +8,9 @@
 //! single `return` of the field, which jtk does not: the unsafe publication does not depend on them.
 
 use super::shared_b::for_each_in_same_code;
-use crate::ast::{ClassKind, K, LitKind, Tree};
 use crate::lint::tree::{Context, has_modifier, strip_parens};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, LitKind, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::If { then, .. } = &tree.kind else { return };

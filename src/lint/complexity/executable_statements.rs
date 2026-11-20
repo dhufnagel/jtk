@@ -7,9 +7,9 @@
 //! separator, other statements one node, and a block its closing brace; so `{ if (a) {} if (b) {} }` counts 1.
 
 use super::{is_constructor_call, is_method_like, token_before};
-use crate::ast::{CaseKind, K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{CaseKind, K, Tree};
 
 pub struct ExecutableStatements {
     max: u32,

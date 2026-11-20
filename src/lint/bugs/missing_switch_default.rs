@@ -4,9 +4,9 @@
 //! As in Checkstyle, switch expressions are not checked (the compiler checks that they are exhaustive), nor are
 //! switch statements with an unguarded pattern or a `case null`, which must be exhaustive too.
 
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check(tree: &Tree, _context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Switch { cases, .. } = &tree.kind else { return };

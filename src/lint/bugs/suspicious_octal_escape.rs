@@ -4,9 +4,9 @@
 //! Like PMD, only string literals and text blocks are checked, not character literals, and each suspicious escape is
 //! reported.
 
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     if !matches!(tree.kind, K::Literal(LitKind::String)) {

@@ -4,9 +4,9 @@
 //! Unsafe fix: `"a".equals(s)` (`!"a".equals(s)` for `!=`), with the literal (or the concatenation with one) first so
 //! that a null operand gives `false` as before. It changes the result where identity was meant (interned strings).
 
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Binary { op, lhs: left, rhs: right } = &tree.kind else { return };

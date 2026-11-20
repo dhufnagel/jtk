@@ -15,7 +15,7 @@ mod visibility_modifier;
 mod abstract_without_abstract;
 mod throws_exception;
 
-use crate::ast::{ClassDecl, K, Mods, Tag, Tree};
+use jtk_parser::ast::{ClassDecl, K, Mods, Tag, Tree};
 
 use super::Rule;
 use super::tree::{Context, has_modifier};

@@ -1,9 +1,9 @@
 //! A005: an interface with constants but no methods, used to share constants rather than to describe a type
 //! (Checkstyle InterfaceIsType, PMD ConstantsInInterface). Marker interfaces without members are allowed.
 
-use crate::ast::{ClassKind, K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassKind, K, Tree};
 
 pub fn check(tree: &Tree, _context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Class(interface) = &tree.kind else { return };

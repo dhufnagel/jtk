@@ -1,7 +1,7 @@
 //! Helpers of several modernization rules, on the AST.
 
-use crate::ast::{K, Tree};
 use crate::lint::tree::strip_parens;
+use jtk_parser::ast::{K, Tree};
 
 /// The name that the expression assigns or increments (`x = ...`, `(x) += ...`, `x++`, `--x`) and its identifier, if
 /// it is a simple name. `parent` is the expression's parent: an annotation's `key = value` assigns nothing.

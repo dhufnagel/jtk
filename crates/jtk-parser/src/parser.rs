@@ -10,7 +10,7 @@ use crate::ast::{
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use crate::input::{RawKind, lex};
+use crate::lexer::{RawKind, lex};
 
 /// Where parsing stopped (a byte offset), for diagnostics.
 #[derive(Debug, Clone, Copy)]

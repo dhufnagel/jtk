@@ -9,9 +9,9 @@
 //! The fix removes the null check if it is next to the `instanceof` in the chain, so that nothing else is evaluated
 //! with a `null` `x` that was not before.
 
-use crate::ast::{K, LitKind, Tree};
 use crate::lint::tree::{Context, is_type_child, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{K, LitKind, Tree};
 
 pub fn check(instanceof: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let Some(name) = tested_variable(instanceof) else { return };

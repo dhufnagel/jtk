@@ -2,9 +2,9 @@
 //! AvoidReassigningLoopVariables).
 
 use super::shared_a::{for_each_in_same_code, modified_name};
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(tree: &Tree, _context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let (variables, body) = match &tree.kind {

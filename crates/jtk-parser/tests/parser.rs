@@ -11,13 +11,14 @@ fn assert_same_tree(name: &str, text: &str) {
     let converted = converter::parse(text)
         .and_then(|tree| converter::Converter { src: text }.compilation_unit(&tree.root_node()).ok())
         .map(|t| format!("{t:?}"));
-    let own = jtk::parser::parse(text).ok().map(|t| format!("{t:?}"));
+    let own = jtk_parser::parser::parse(text).ok().map(|t| format!("{t:?}"));
     assert_eq!(converted, own, "{name}");
 }
 
 #[test]
 fn same_trees_as_tree_sitter_on_the_formatter_tests() {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testdata");
+    // The formatter's test inputs and outputs, at the workspace root.
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/testdata");
     let mut count = 0;
     for entry in fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
@@ -81,6 +82,6 @@ fn rejects_what_tree_sitter_rejects() {
         "class A { Object o = (G[]) -h; }",
         "class A { Object o = (G<T>) +h; }",
     ] {
-        assert!(jtk::parser::parse(case).is_err(), "{case}");
+        assert!(jtk_parser::parser::parse(case).is_err(), "{case}");
     }
 }

@@ -19,9 +19,9 @@
 use std::collections::HashMap;
 use std::ptr;
 
-use crate::ast::{ClassDecl, ClassKind, K, LitKind, MethodDecl, Tree, VarDecl};
 use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassDecl, ClassKind, K, LitKind, MethodDecl, Tree, VarDecl};
 
 pub fn check<'t>(tree: &'t Tree, context: &Context<'t>, diagnostics: &mut Vec<Diagnostic>) {
     let K::Method(method) = &tree.kind else { return };

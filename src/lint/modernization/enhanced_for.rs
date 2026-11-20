@@ -14,9 +14,9 @@
 
 use std::ops::Range;
 
-use crate::ast::{CaseKind, ClassKind, K, Tree, VarDecl};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{CaseKind, ClassKind, K, Tree, VarDecl};
 
 use super::shared_a::for_each_variable_reference;
 

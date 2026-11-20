@@ -1,7 +1,7 @@
 //! Helpers on the AST shared by several rules of the group.
 
-use crate::ast::{ClassKind, K, Tree, VarDecl};
 use crate::lint::tree::{Context, is_type_child};
+use jtk_parser::ast::{ClassKind, K, Tree, VarDecl};
 
 /// Whether `tree`, a child of `parent` outside types, names a variable: an identifier that is not a method name,
 /// `this` or `super`.

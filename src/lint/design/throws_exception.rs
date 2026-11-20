@@ -14,9 +14,9 @@
 //! a top-level, concrete class extending `TestCase`.
 
 use super::{has_keyword, qualified_name, simple_name, single_type_imports};
-use crate::ast::{ClassDecl, ClassKind, K, MethodDecl, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{ClassDecl, ClassKind, K, MethodDecl, Tree};
 
 /// JUnit 4 and 5 and TestNG annotations of test methods.
 const TEST_ANNOTATIONS: &[&str] = &[

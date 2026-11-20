@@ -6,9 +6,9 @@
 //! methods are not.
 
 use super::{is_annotation_element, is_field, is_interface_member, is_static_or_final};
-use crate::ast::{K, Mods, Tree, VarDecl};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Mods, Tree, VarDecl};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     // An abbreviation and the capital starting the next word.

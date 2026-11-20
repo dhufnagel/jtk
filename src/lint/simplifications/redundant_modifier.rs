@@ -10,9 +10,9 @@
 //! - enum constructor modifiers, and `public` on constructors of classes that are neither public nor protected
 //! - `strictfp`, which has no effect since Java 17
 
-use crate::ast::{ClassDecl, ClassKind, K, Mods, Tree, VarDecl};
 use crate::lint::tree::{Context, has_modifier, modifier_keywords};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{ClassDecl, ClassKind, K, Mods, Tree, VarDecl};
 
 use super::removal_range;
 

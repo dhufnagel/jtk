@@ -2,9 +2,9 @@
 //! discards the exception or result of the `try` block.
 
 use super::shared_a::for_each_in_same_code;
-use crate::ast::{K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree};
 
 pub fn check(tree: &Tree, _context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Try { finally: Some(finally), .. } = &tree.kind else { return };

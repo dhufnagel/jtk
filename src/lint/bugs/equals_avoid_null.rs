@@ -13,9 +13,9 @@
 //! throwing, and an assignment in the argument now happens before `s` is read.
 
 use super::shared_a::is_varargs;
-use crate::ast::{ClassKind, K, LitKind, Tree, VarDecl};
 use crate::lint::tree::{Context, strip_parens};
 use crate::lint::{Diagnostic, Edit, Rule};
+use jtk_parser::ast::{ClassKind, K, LitKind, Tree, VarDecl};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::MethodInvocation { select, type_args, args } = &tree.kind else { return };
@@ -68,7 +68,7 @@ fn is_literal_argument(argument: &Tree) -> bool {
 enum Scope<'t> {
     Tree(&'t Tree),
     Catch(&'t VarDecl),
-    EnumConstant(&'t crate::ast::EnumConstant),
+    EnumConstant(&'t jtk_parser::ast::EnumConstant),
 }
 
 /// Whether the receiver is a name, `this.name` or `Class.name` declared with the type `String`.

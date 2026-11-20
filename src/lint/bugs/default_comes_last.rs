@@ -4,9 +4,9 @@
 //! As in Checkstyle, `default` may share its statements with `case` labels in any order if they are the last ones
 //! (`default: case 1: ...`), and `case null, default` is not checked.
 
-use crate::ast::{Case, CaseKind, K, Tree};
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{Case, CaseKind, K, Tree};
 
 pub fn check(tree: &Tree, _context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let (K::Switch { cases, .. } | K::SwitchExpr { cases, .. }) = &tree.kind else { return };

@@ -5,9 +5,9 @@
 //! As in Checkstyle, the thrown type is compared by simple name with the names in the parameter of any enclosing
 //! `catch`, and `getMessage` must be called directly on that parameter, anywhere in the `throw` statement.
 
-use crate::ast::{K, Tree, VarDecl};
 use crate::lint::tree::{Context, for_each_descendant, strip_parens};
 use crate::lint::{Diagnostic, Rule};
+use jtk_parser::ast::{K, Tree, VarDecl};
 
 pub fn check(tree: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>) {
     let K::Throw(expression) = &tree.kind else { return };

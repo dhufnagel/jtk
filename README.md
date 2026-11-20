@@ -8,8 +8,8 @@ It ports the original pipeline closely:
 
 | Module | Ported from |
 |---|---|
-| `input.rs` | `JavaInput`, `JavacTokens` (own lexer instead of javac's) |
-| `parser.rs`, `ast.rs` | – (a hand-written recursive-descent parser that builds a javac-shaped AST) |
+| `input.rs` | `JavaInput`, `JavacTokens` (on jtk-parser's lexer instead of javac's) |
+| [`crates/jtk-parser`](crates/jtk-parser) | – (a hand-written lexer and recursive-descent parser that builds a javac-shaped AST) |
 | `visitor.rs` | `JavaInputAstVisitor`, `Java14InputAstVisitor`, `Java21InputAstVisitor`, `TypeNameClassifier` |
 | `ops.rs` | `OpsBuilder` |
 | `doc.rs` | `doc/*` (`Level`, `Break`, `State`, …): the line-breaking algorithm |
@@ -181,11 +181,11 @@ rejects:
 - `this(...)` / `super(...)` outside a constructor body (`B26952926`, `palantir-expression-lambda-2`)
 - annotations mixing positional and named arguments (`B38352414`)
 
-The parser is hand-written (`src/parser.rs`) and supports Java up to 25, including compact source files and module
-imports. It builds the same trees as converting the syntax tree of
+The parser is hand-written ([`crates/jtk-parser`](crates/jtk-parser), usable on its own) and supports Java up to 25,
+including compact source files and module imports. It builds the same trees as converting the syntax tree of
 [tree-sitter-java-orchard](https://codeberg.org/grammar-orchard/tree-sitter-java-orchard), which jtk used before:
-`tests/parser.rs` and `cargo run --release --example parser_check -- <dir>` check this, with tree-sitter as a
-development dependency only. Formatting and linting use the same tree.
+`crates/jtk-parser/tests/parser.rs` and `cargo run --release -p jtk-parser --example parser_check -- <dir>` check
+this, with tree-sitter as a development dependency only. Formatting and linting use the same tree.
 
 ## Comparison with the original
 
