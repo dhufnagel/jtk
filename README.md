@@ -167,6 +167,27 @@ equivalent rules: `@SuppressWarnings` with `"checkstyle:needbraces"`, `"NeedBrac
 that Checkstyle and PMD also have, `jtk lint` is 17 to 23 times faster than Checkstyle and 2.6 to 16 times faster than
 PMD ([docs/benchmark.md](docs/benchmark.md)).
 
+### Enforcing the rules
+
+Fix where code is written, and only check in CI, so that no manual clean-up remains:
+
+- **Editor:** the VS Code extension's `source.fixAll.jtk` and format on save.
+- **AI agents:** [`editors/claude-code`](editors/claude-code) holds Claude Code hooks that run `jtk check --fix` after
+  each edit and before the agent finishes, and hand the remaining violations back to the agent.
+- **Commit:** the `jtk-check` hook for [pre-commit](https://pre-commit.com) runs `jtk check --fix` on the staged Java
+  files:
+
+  ```yaml
+  repos:
+    - repo: https://github.com/dhufnagel/jtk
+      rev: v0.6.0
+      hooks:
+        - id: jtk-check
+  ```
+
+- **CI:** `jtk check src` fails on unformatted files and violations without changing them;
+  `--output-format json` gives the same as one JSON object.
+
 ## Tests
 
 `tests/cli.rs` checks the command line against outputs of the original. `tests/testdata` is the upstream formatter
