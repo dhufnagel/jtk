@@ -11,7 +11,7 @@ The crate is not published on crates.io. Other projects depend on it through Git
 
 ```toml
 [dependencies]
-jtk-parser = { git = "https://github.com/dhufnagel/jtk", tag = "v0.7.0" }
+jtk-parser = { git = "https://github.com/dhufnagel/jtk", tag = "v0.8.0" }
 ```
 
 Its tests check that the parser builds the same trees as converting the syntax trees of
