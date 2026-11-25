@@ -15,6 +15,9 @@ mod visibility_modifier;
 mod abstract_without_abstract;
 mod throws_exception;
 
+mod mutable_public_array;
+mod protected_in_final_class;
+
 use jtk_parser::ast::{ClassDecl, K, Tag, Tree};
 
 use super::Rule;
@@ -34,6 +37,8 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::DeclarationUsageDistance, &[Tag::Block, Tag::Switch, Tag::SwitchExpr], declaration_usage_distance::check),
     (Rule::MagicNumber, &[Tag::Literal], magic_number::check),
     (Rule::OuterTypeFilename, &[Tag::CompilationUnit], outer_type_filename::check),
+    (Rule::ProtectedInFinalClass, &[Tag::Class], protected_in_final_class::check),
+    (Rule::MutablePublicArray, &[Tag::Vars], mutable_public_array::check),
 ];
 
 /// The qualified name of a type or package (or annotation) without type arguments and annotations: `a.b.C<D>` is

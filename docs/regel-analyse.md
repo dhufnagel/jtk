@@ -290,6 +290,10 @@ sicher sind). B019 findet dieselben 7 Fälle, meldet aber an der äußeren `if`-
 A015 und der Gruppe C fest, unter Checkstyles Property-Namen in kebab-case (README, Abschnitt Configuration). Offen: der
 Import aus `checkstyle.xml`, PMD-Rulesets und Eclipse-Einstellungen, die Namensmuster von N001–N012.
 
+**Stand 25.11.2026:** Das Standard-Set enthält zusätzlich 66 Regeln aus weiteren Tools (Error Prone, PMD, IntelliJ,
+NetBeans, Picnic, Baseline), die ★-Kandidaten aus [regel-erweiterung.md](regel-erweiterung.md) außer S023, P016 und
+M041.
+
 ## 8. Config-Import: Checkstyle-Module, die nicht nach lint gehören
 
 | Behandlung | Module |

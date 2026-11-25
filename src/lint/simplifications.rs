@@ -21,6 +21,19 @@ mod unnecessary_parentheses;
 mod unnecessary_return;
 mod unnecessary_semicolon;
 
+mod array_creation_in_initializer;
+mod cast_to_pattern_variable;
+mod duplicate_throws;
+mod extends_object;
+mod identity_conversion;
+mod negated_comparison;
+mod shared_batch3;
+mod size_equals_zero;
+mod static_via_instance;
+mod unnecessary_break;
+mod unnecessary_continue;
+mod unused_label;
+
 use std::ops::Range;
 
 use super::{Edit, Rule};
@@ -91,6 +104,17 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::UnnecessaryInstantiation, &[Tag::NewClass, Tag::MethodInvocation], unnecessary_instantiation::check),
     (Rule::NullCheckBeforeInstanceof, &[Tag::InstanceOf], null_check_before_instanceof::check),
     (Rule::ExpressionLambda, &[Tag::Lambda], expression_lambda::check),
+    (Rule::ExtendsObject, &[Tag::Class, Tag::TypeParameter], extends_object::check),
+    (Rule::DuplicateThrows, &[Tag::Method], duplicate_throws::check),
+    (Rule::StaticViaInstance, &[Tag::MemberSelect], static_via_instance::check),
+    (Rule::UnnecessaryBreak, &[Tag::Break], unnecessary_break::check),
+    (Rule::UnnecessaryContinue, &[Tag::Continue], unnecessary_continue::check),
+    (Rule::UnusedLabel, &[Tag::Labeled], unused_label::check),
+    (Rule::NegatedComparison, &[Tag::Unary], negated_comparison::check),
+    (Rule::CastToPatternVariable, &[Tag::Cast], cast_to_pattern_variable::check),
+    (Rule::SizeEqualsZero, &[Tag::Binary], size_equals_zero::check),
+    (Rule::IdentityConversion, &[Tag::MethodInvocation], identity_conversion::check),
+    (Rule::ArrayCreationInInitializer, &[Tag::NewArray], array_creation_in_initializer::check),
 ];
 
 /// The range that removes a token or annotation together with the whitespace after it on the same line.

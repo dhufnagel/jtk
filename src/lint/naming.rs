@@ -21,6 +21,8 @@
 mod abbreviation_in_name;
 mod illegal_identifier;
 
+mod method_named_like_class;
+
 use super::tree::{Context, TreeCheck};
 use super::{Diagnostic, Rule};
 use jtk_parser::ast::{ClassKind, K, Modifier, Mods, Tag, Tree, VarDecl};
@@ -284,6 +286,7 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], TreeCheck)] = &[
     (Rule::PackageName, &[Tag::CompilationUnit], package_name),
     (Rule::IllegalIdentifier, DECLARING, illegal_identifier::check),
     (Rule::AbbreviationInName, DECLARING, abbreviation_in_name::check),
+    (Rule::MethodNamedLikeClass, &[Tag::Method], method_named_like_class::check),
 ];
 
 /// The kinds of trees that declare the names N013 and N014 check.

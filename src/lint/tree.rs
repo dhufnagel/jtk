@@ -124,6 +124,10 @@ const CHECKS: &[&[(Rule, &[Tag], TreeCheck)]] = &[
     super::naming::TREE_CHECKS,
     super::design::TREE_CHECKS,
     super::complexity::TREE_CHECKS,
+    super::testing::TREE_CHECKS,
+    super::concurrency::TREE_CHECKS,
+    super::logging::TREE_CHECKS,
+    super::security::TREE_CHECKS,
 ];
 
 /// Runs the selected checks on the compilation unit.

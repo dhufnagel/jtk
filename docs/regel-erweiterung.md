@@ -34,6 +34,8 @@ Die Einstufung ist eine Schätzung aus den Regelbeschreibungen, nicht aus einer 
 
 **837 neue, distinkte Regeln**, davon 329 auf Stufe 1, 283 auf Stufe 2 und 225 auf Stufe 2*; 287 mit sicherem Fix, 166 mit unsicherem Fix; 69 Kandidaten für das Standard-Regelset (★). Dazu kommen 416 Regeln der Tools, die bestehende jtk-Regeln schon abdecken (Abschnitt 4), und 861 ungeeignete (Abschnitt 6). Abschnitt 5 ordnet alle Eclipse-Clean-Ups und Save-Actions zu.
 
+**Stand 25.11.2026:** 66 der 69 ★-Regeln sind umgesetzt und im Standard-Set (`src/lint/`, neue Gruppen T, L, K, V). Nicht umgesetzt sind S023 und P016, die nach der Stichprobe nur kosmetisch sind, und M041, das ab Java 18 (UTF-8 als Standard-Charset, JEP 400) kaum noch zutrifft. Wo eine Regel ohne Typen enger ist als im Original, beschreibt das ihr Modulkommentar. Auf digitale-praxis und miya-documentation melden die neuen Regeln 6 Verstöße (S137 3×, M043 2×, S113 1×), alle echt; die Fixes sind zusammen mit der Formatierung idempotent.
+
 | Kategorie | Neue Regeln | Codes | ★ |
 |---|---:|---|---:|
 | B Fehlerquellen | 250 | B035–B284 | 19 |

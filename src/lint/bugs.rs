@@ -35,6 +35,29 @@ mod shared_a;
 mod suspicious_octal_escape;
 mod unused_parameter;
 
+mod compare_to_constant;
+mod constant_bitmask;
+mod constant_comparison;
+mod constant_overflow;
+mod division_by_zero;
+mod nan_comparison;
+mod oddness_check;
+mod random_cast_to_int;
+mod shared_arithmetic;
+mod xor_power;
+
+mod collection_with_itself;
+mod equals_self_call;
+mod exception_not_thrown;
+mod invalid_regex;
+mod label_in_switch;
+mod regex_dot;
+mod serial_version_uid;
+mod shared_misc;
+mod string_builder_char;
+mod suspicious_date_pattern;
+mod throw_null;
+
 use super::Rule;
 
 use jtk_parser::ast::Tag;
@@ -73,4 +96,23 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::MissingNullCase, &[Tag::Switch, Tag::SwitchExpr], missing_null_case::check),
     (Rule::Finalizer, &[Tag::Method], avoided_methods::check_finalizer),
     (Rule::Clone, &[Tag::Method], avoided_methods::check_clone),
+    (Rule::CompareToConstant, &[Tag::Binary], compare_to_constant::check),
+    (Rule::NanComparison, &[Tag::Binary], nan_comparison::check),
+    (Rule::ConstantBitmask, &[Tag::Binary], constant_bitmask::check),
+    (Rule::ConstantComparison, &[Tag::Binary], constant_comparison::check),
+    (Rule::OddnessCheck, &[Tag::Binary], oddness_check::check),
+    (Rule::ConstantOverflow, &[Tag::Binary, Tag::Unary, Tag::Cast], constant_overflow::check),
+    (Rule::DivisionByZero, &[Tag::Binary, Tag::Assign], division_by_zero::check),
+    (Rule::RandomCastToInt, &[Tag::Cast], random_cast_to_int::check),
+    (Rule::XorPower, &[Tag::Binary], xor_power::check),
+    (Rule::EqualsSelfCall, &[Tag::Method], equals_self_call::check),
+    (Rule::StringBuilderChar, &[Tag::NewClass], string_builder_char::check),
+    (Rule::RegexDot, &[Tag::MethodInvocation], regex_dot::check),
+    (Rule::InvalidRegex, &[Tag::MethodInvocation], invalid_regex::check),
+    (Rule::SuspiciousDatePattern, &[Tag::MethodInvocation, Tag::NewClass], suspicious_date_pattern::check),
+    (Rule::CollectionWithItself, &[Tag::MethodInvocation], collection_with_itself::check),
+    (Rule::LabelInSwitch, &[Tag::Labeled], label_in_switch::check),
+    (Rule::ExceptionNotThrown, &[Tag::ExprStmt], exception_not_thrown::check),
+    (Rule::SerialVersionUid, &[Tag::Vars], serial_version_uid::check),
+    (Rule::ThrowNull, &[Tag::Throw], throw_null::check),
 ];

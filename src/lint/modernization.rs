@@ -18,6 +18,8 @@ mod unnamed_variable;
 mod use_var;
 mod when_guard;
 
+mod path_of;
+
 use super::Rule;
 use jtk_parser::ast::Tag;
 
@@ -40,4 +42,5 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::UseVar, &[Tag::Vars], use_var::check),
     (Rule::EnhancedFor, &[Tag::For], enhanced_for::check),
     (Rule::FinalField, &[Tag::CompilationUnit], final_field::check),
+    (Rule::PathOf, &[Tag::MethodInvocation], path_of::check),
 ];

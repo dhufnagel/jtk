@@ -4,14 +4,18 @@
 
 mod bugs;
 mod complexity;
+mod concurrency;
 mod design;
 mod fix;
 mod imports;
+mod logging;
 mod modernization;
 mod naming;
 mod options;
+mod security;
 mod simplifications;
 mod suppression;
+mod testing;
 mod tree;
 
 use std::path::Path;
@@ -182,6 +186,72 @@ rules! {
     NestedTryDepth "C016" ["NestedTryDepth"] [],
     ThrowsCount "C021" ["ThrowsCount"] [],
     CognitiveComplexity "C022" [] ["CognitiveComplexity"],
+    ProtectedInFinalClass "A044" [] ["ProtectedMemberInFinalClass", "AvoidProtectedFieldInFinalClass", "AvoidProtectedMethodInFinalClassNotExtending"],
+    MutablePublicArray "A059" [] [],
+    EqualsSelfCall "B035" [] [],
+    CompareToConstant "B054" [] [],
+    NanComparison "B078" [] ["ComparisonWithNaN"],
+    ConstantBitmask "B086" [] [],
+    ConstantComparison "B087" [] [],
+    OddnessCheck "B090" [] [],
+    ConstantOverflow "B093" [] [],
+    DivisionByZero "B096" [] [],
+    RandomCastToInt "B101" [] [],
+    XorPower "B108" [] [],
+    StringBuilderChar "B140" [] ["StringBufferInstantiationWithChar"],
+    RegexDot "B142" [] [],
+    InvalidRegex "B143" [] [],
+    SuspiciousDatePattern "B150" [] [],
+    CollectionWithItself "B168" [] [],
+    LabelInSwitch "B205" [] ["NonCaseLabelInSwitch"],
+    ExceptionNotThrown "B219" [] [],
+    SerialVersionUid "B241" [] [],
+    ThrowNull "B280" [] [],
+    ThreadRun "K001" [] ["DontCallThreadRun"],
+    ThreadNotStarted "K002" [] [],
+    ThreadStop "K006" [] [],
+    InterruptedInCatch "K010" [] [],
+    WaitNotInLoop "K016" [] [],
+    WaitOnCondition "K023" [] [],
+    LockWithoutTry "K024" [] [],
+    SynchronizeOnNonFinal "K026" [] [],
+    SynchronizeOnValueBased "K027" [] [],
+    StaticFieldInstanceLock "K042" [] [],
+    NonAtomicVolatile "K043" [] [],
+    StaticFormatter "K047" [] ["UnsynchronizedStaticFormatter"],
+    ZeroCorePool "K058" [] [],
+    ForeignLoggerClass "L002" [] [],
+    PlaceholderCount "L004" [] ["InvalidLogMessageFormat"],
+    ThrowableNotLast "L006" [] [],
+    LogGuardLevel "L009" [] [],
+    PathOf "M043" [] [],
+    MethodNamedLikeClass "N015" [] ["MethodWithSameNameAsEnclosingClass"],
+    ExtendsObject "S028" [] ["ExtendsObject"],
+    DuplicateThrows "S036" [] [],
+    StaticViaInstance "S047" [] [],
+    UnnecessaryBreak "S056" [] [],
+    UnnecessaryContinue "S057" [] [],
+    UnusedLabel "S059" [] ["UnusedLabel"],
+    NegatedComparison "S070" [] ["LogicInversion"],
+    CastToPatternVariable "S102" [] [],
+    SizeEqualsZero "S113" [] ["UseCollectionIsEmpty"],
+    IdentityConversion "S129" [] [],
+    ArrayCreationInInitializer "S137" [] ["UseShortArrayInitializer"],
+    TestWithoutAnnotation "T001" [] ["DetachedTestCase", "UnitTestShouldUseTestAnnotation"],
+    NonStaticClassFixture "T004" [] [],
+    MalformedTest "T005" [] ["JUnitJupiterTestNoPrivateModifier"],
+    MixedJunitVersions "T009" [] ["WrongTestAnnotation"],
+    SwallowedAssertion "T025" [] [],
+    AssertArgumentOrder "T032" [] ["AssertEqualsArgumentOrder"],
+    AssertEqualsOnArrays "T033" [] [],
+    SelfAssertion "T035" [] [],
+    SimplifiableAssertion "T037" [] ["SimplifiableTestAssertion"],
+    AssertStatementInTest "T040" [] ["AssertStatementInTest"],
+    AssertjMethodResult "T049" [] [],
+    StaticMock "T060" [] [],
+    IncompleteMockitoCall "T062" [] [],
+    HardcodedCryptoKey "V008" [] ["HardCodedCryptoKey"],
+    BidiCharacter "V014" [] [],
 }
 
 impl Rule {
@@ -189,6 +259,7 @@ impl Rule {
     fn java_version(self) -> u32 {
         match self {
             Rule::InstanceofPattern => 16,
+            Rule::PathOf => 11,
             Rule::DiamondOperator => 7,
             Rule::EnhancedSwitch => 14,
             Rule::UseVar => 10,
@@ -208,6 +279,13 @@ impl Rule {
         const DEFAULT: &[&str] = &[
             "B001", "B002", "B003", "B004", "B007", "B009", "B010", "B011", "B014", "B015", "B016", "B017", "B019",
             "B026", "B027", "S001", "S002", "S003", "S006", "S007", "S008", "M001", "M004",
+            // From further tools (docs/regel-erweiterung.md).
+            "A044", "A059", "B035", "B054", "B078", "B086", "B087", "B090", "B093", "B096", "B101", "B108", "B140",
+            "B142", "B143", "B150", "B168", "B205", "B219", "B241", "B280", "K001", "K002", "K006", "K010", "K016",
+            "K023", "K024", "K026", "K027", "K042", "K043", "K047", "K058", "L002", "L004", "L006", "L009", "M043",
+            "N015", "S028", "S036", "S047", "S056", "S057", "S059", "S070", "S102", "S113", "S129", "S137", "T001",
+            "T004", "T005", "T009", "T025", "T032", "T033", "T035", "T037", "T040", "T049", "T060", "T062", "V008",
+            "V014",
         ];
         DEFAULT.contains(&self.code()) || self.code().starts_with('N') && self.code() <= "N012"
     }

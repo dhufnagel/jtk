@@ -66,7 +66,7 @@ Differences from the original command line:
 ```
 
 `jtk lint` checks what the formatter leaves alone. The rules come from Checkstyle, PMD, Error Prone and the Eclipse
-save actions; [docs/regel-analyse.md](docs/regel-analyse.md) lists them all. Without `--select`, the default set
+save actions; [docs/regel-analyse.md](docs/regel-analyse.md) lists them all, [docs/regel-erweiterung.md](docs/regel-erweiterung.md) the rules from further tools. Without `--select`, the default set
 runs, chosen for few false alarms:
 
 | Codes | Rules |
@@ -76,6 +76,13 @@ runs, chosen for few false alarms:
 | `S001`–`S003`, `S006`–`S008` | simplifications: braces, boolean expressions, parentheses, semicolons, modifiers |
 | `M001`, `M004` | modernizations: `instanceof` patterns (Java 16), diamond operator (Java 7) |
 | `N001`–`N012` | naming conventions, with Checkstyle's default formats |
+| `B035`–`B280` (19 rules) | from Error Prone, PMD, IntelliJ and others: comparisons with NaN or `compareTo == 1`, constant overflow, `^` as power, `(int) Math.random()`, invalid regular expressions, `YYYY` date patterns, exceptions created but not thrown, `throw null`, ... |
+| `S028`–`S137` (11 rules), `M043` | `extends Object`, duplicate `throws`, static access via instance, unnecessary `break`/`continue`, unused labels, `!(a == b)`, `size() == 0`, `new T[] {...}` in initializers, `Path.of` (Java 11) |
+| `A044`, `A059`, `N015` | `protected` in final classes, public static arrays, methods named like their class |
+| `T001`–`T062` (13 rules) | tests: JUnit 4/5 tests that do not run, mixed JUnit versions, swallowed or swapped assertions, simpler JUnit and AssertJ assertions, Mockito misuse |
+| `L002`–`L009` | logging: foreign logger class, placeholder count, exception not last, guard level |
+| `K001`–`K058` (13 rules) | concurrency: `Thread.run()`, threads never started, `wait()` outside loops, locks without `try`/`finally`, `synchronized` on non-final fields or boxed values, static formatters, ... |
+| `V008`, `V014` | hard-coded crypto keys, Unicode bidi control characters |
 
 The other rules are the remaining Checkstyle checks, with Checkstyle's default properties and limits, and PMD rules
 (B016–B019, B022, B028, S004, S005, S010, S019, A010, A011, C022) with PMD's defaults:
@@ -106,7 +113,9 @@ Options:
 - `--unsafe-fixes` with `--fix` also applies the unsafe fixes, which may change the behaviour in edge cases, as in
   ruff: removing unused variables and private members (B026, B027), `"a".equals(s)` for `==` and literal-first
   `equals` (B007, B008), `x == null` for `x.equals(null)` (B009), switch rules (M002), text blocks (M009) and
-  multi-catch (M010). Review their changes.
+  multi-catch (M010), and among the rules from further tools `x % 2 != 0` (B090), `L` suffixes against overflow
+  (B093), `throw` for exceptions created but not thrown (B219), `@Test` for JUnit 3 style methods (T001) and
+  `start()` for `Thread.run()` (K001). Review their changes.
 - `--select` and `--ignore` take comma-separated code prefixes (`--select B,S001`); `--select ALL` checks all rules,
   `--extend-select` adds rules to the selected or default set.
 - `--java VERSION` skips rules that suggest newer language features than the project's Java version.
