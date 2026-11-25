@@ -88,7 +88,7 @@ jobs:
         if: matrix.smoke
         run: |
           "$BIN" --version
-          actual=$(printf 'class A{int x=1;}' | "$BIN" - | tr -d '\r')
+          actual=$(printf 'class A{int x=1;}' | "$BIN" format - | tr -d '\r')
           expected=$(printf 'class A {\n    int x = 1;\n}')
           if [[ "$actual" != "$expected" ]]; then
             echo "::error::unexpected output:"; echo "$actual"; exit 1
