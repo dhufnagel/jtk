@@ -94,7 +94,7 @@ fn java_version_and_format_settings() {
     let d = Dir::new("format", &[("jtk.toml", config), ("C.java", source)]);
     assert_eq!(jtk(&d, &["check", &d.path("C.java")]), (0, String::new(), String::new()));
     assert_eq!(jtk(&d, &["lint", "--java", "17", &d.path("C.java")]).0, 1);
-    assert_eq!(jtk(&d, &[&d.path("C.java")]).1, source);
+    assert_eq!(jtk(&d, &["format", &d.path("C.java")]).1, source);
 }
 
 #[test]

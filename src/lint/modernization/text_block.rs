@@ -6,11 +6,11 @@
 //! ends; jtk keeps to text that is made of lines, which reads better as a text block. Not reported with comments
 //! inside.
 //!
-//! Unsafe fix: the text block, indented like the second literal's line. Escapes stay as they are, except that `\n`
+//! Safe fix: the text block, indented like the second literal's line. Escapes stay as they are, except that `\n`
 //! becomes a line break and `\"` a quote; quotes that would end the block are escaped, a space ending a line becomes
 //! `\s` (text blocks strip trailing spaces), and text without a final line break ends with a `\` line continuation.
-//! Unsafe because the value only stays the same where the source has no line terminator other than `\n` escapes
-//! (always the case for literals) and the formatter keeps the text block's lines, which jtk's does.
+//! The value stays the same because string literals contain no line terminators other than `\n` escapes, and
+//! formatters (jtk's, Eclipse's) keep the text block's lines.
 
 use crate::lint::tree::Context;
 use crate::lint::{Diagnostic, Edit, Rule};
@@ -34,7 +34,7 @@ pub fn check(binary: &Tree, context: &Context, diagnostics: &mut Vec<Diagnostic>
     let indentation = line_indentation(literals[1].start, text);
     let block = text_block(&contents.concat(), indentation);
     let fix = Edit::new(binary.start..binary.end, block);
-    diagnostics.push(Diagnostic::new(Rule::TextBlock, binary.start, message).with_unsafe_fix(vec![fix]));
+    diagnostics.push(Diagnostic::new(Rule::TextBlock, binary.start, message).with_fix(vec![fix]));
 }
 
 /// The operands of a `+` concatenation if all are string literals (not text blocks) and no comment is between

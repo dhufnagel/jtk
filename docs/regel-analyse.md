@@ -159,7 +159,7 @@ EC = Eclipse-Save-Action.
 | M006 | `var` (nur sichere Fälle) / kein `var` (wählbar) | 10 | EC „Use var“ | ✅ | 1 |
 | M007 | Enhanced for über Arrays | 5 | PMD ForLoopCanBeForeach, EC | ✅ | 2 |
 | M008 | Unbenutzte catch-/Lambda-/try-Variable → `_` | 22 | CS Unused*ShouldBeUnnamed | ✅ | 2 |
-| M009 | Text Block statt verketteter Strings | 15 | EC „Use text blocks“ | ⚠️ | 1 |
+| M009 | Text Block statt verketteter Strings | 15 | EC „Use text blocks“ | ✅ | 1 |
 | M010 | Identische catch-Blöcke zusammenfassen | 7 | PMD IdenticalCatchBranches, EC | ⚠️ | 1 |
 | M011 | `final` für Parameter | – | CS FinalParameters, EC | ✅ | 1 |
 | M012 | Privates Feld kann `final` sein | – | PMD ImmutableField, EC „final for private fields“ | ✅ | 2 |
@@ -234,7 +234,7 @@ Die vollständige Zuordnung aller Eclipse-Clean-Ups (`CleanUpConstants`, 156 Ein
 | Remove redundant type arguments | lint M004 |
 | Use pattern matching for instanceof | lint M001 |
 | Convert to switch expression | lint M002 (⚠️, Pfeil-Form für `switch`-Anweisungen) |
-| Use text blocks | lint M009 (⚠️) |
+| Use text blocks | lint M009 (✅) |
 | Use var | lint M006 (nur sichere Fälle) |
 | Convert to enhanced for loop | lint M007 (Arrays; `List` nur mit bekanntem Typargument) |
 | Add final modifier (private fields / parameters / locals) | lint M012, M011, M015 |
@@ -250,8 +250,9 @@ Die vollständige Zuordnung aller Eclipse-Clean-Ups (`CleanUpConstants`, 156 Ein
 können (⚠️), sind *unsafe* und werden wie bei ruff nur mit `--fix --unsafe-fixes` angewandt: B007 (`"a".equals(s)`),
 B008 (Literal zuerst), B009 (`x == null`), B026/B027 (Entfernen; B026 nur ohne spätere Zuweisung und mit
 seiteneffektfreiem Wert, B027 mit Javadoc, nicht bei überladenen Methoden wegen JUnits `@MethodSource`), M002
-(Pfeil-Form), M009 (Text Block) und M010 (Multi-Catch; Untertypen machen ihn ungültig). M006, M007 und M012 haben
-sichere Fixes. Abgleich mit PMD auf dessen Regel-Tests: M007 33/33 Zeilen, M010 18/18, M012 171 von 177 (jtk folgt
+(Pfeil-Form) und M010 (Multi-Catch; Untertypen machen ihn ungültig). M006, M007, M009 und M012 haben sichere Fixes
+(M009 seit 25.11.2026: String-Literale enthalten keine echten Zeilenumbrüche, und die Formatter lassen Text-Blöcke
+unverändert). Abgleich mit PMD auf dessen Regel-Tests: M007 33/33 Zeilen, M010 18/18, M012 171 von 177 (jtk folgt
 keinen Zuweisungen in `if`/`else`-Zweigen; dafür erkennt es Zuweisungen über `this(...)`), auf commons-lang und dem
 Checkstyle-Quellcode identisch. Alle Fixes zusammen (safe und unsafe) lassen commons-lang kompilierbar (javac,
 `src/main`) und vom Formatter akzeptiert; auf dem Checkstyle-Quellcode entstehen keine Syntaxfehler.
@@ -292,7 +293,8 @@ Import aus `checkstyle.xml`, PMD-Rulesets und Eclipse-Einstellungen, die Namensm
 
 **Stand 25.11.2026:** Das Standard-Set enthält zusätzlich 66 Regeln aus weiteren Tools (Error Prone, PMD, IntelliJ,
 NetBeans, Picnic, Baseline), die ★-Kandidaten aus [regel-erweiterung.md](regel-erweiterung.md) außer S023, P016 und
-M041.
+M041. Außerdem gehören die Save Actions M002, M006, M007, M009 und M010 zum Standard-Set, und `jtk` ohne Befehl
+wendet die sicheren Fixes an, formatiert und meldet den Rest (der reine Formatter ist `jtk format`).
 
 ## 8. Config-Import: Checkstyle-Module, die nicht nach lint gehören
 

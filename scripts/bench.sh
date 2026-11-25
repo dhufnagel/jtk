@@ -7,5 +7,5 @@ dir=$1 list=$2 runs=${3:-3}
 cd "$dir"
 for _ in $(seq "$runs"); do
     # Pinned to one core so that the numbers are comparable (the tool uses one worker per available core).
-    /usr/bin/time -f "%e s wall, %U s user" taskset -c 0 xargs -a "$list" "$bin" > /dev/null
+    /usr/bin/time -f "%e s wall, %U s user" taskset -c 0 xargs -a "$list" "$bin" format > /dev/null
 done 2>&1 | sort -t' ' -k4 -n | head -1

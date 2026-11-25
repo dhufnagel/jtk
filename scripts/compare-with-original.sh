@@ -19,7 +19,7 @@ cp -r "$src" "$work/original"
 cp -r "$src" "$work/port"
 
 (cd "$work/original" && find . -name '*.java' -print0 | xargs -0 -n 50 -P 8 $original --palantir -i 2>"$work/original-errors.txt") || true
-(cd "$work/port" && find . -name '*.java' -print0 | xargs -0 -n 50 -P 8 "$port" -i 2>"$work/port-errors.txt") || true
+(cd "$work/port" && find . -name '*.java' -print0 | xargs -0 -n 50 -P 8 "$port" format -i 2>"$work/port-errors.txt") || true
 
 total=$(find "$src" -name '*.java' | wc -l)
 different=$(diff -rq "$work/original" "$work/port" | sed "s|^Files $work/original/||; s| and .*||" || true)

@@ -24,11 +24,17 @@ It ports the original pipeline closely:
 
 ```sh
 cargo build --release
-./target/release/jtk Foo.java Bar.java   # print formatted sources
-./target/release/jtk -i src/**/*.java    # format in place
-./target/release/jtk - < Foo.java        # stdin to stdout
-./target/release/jtk --dry-run --set-exit-if-changed src/**/*.java   # CI check
+./target/release/jtk src                        # fix, format in place, and report the remaining violations
+./target/release/jtk format Foo.java Bar.java   # print formatted sources
+./target/release/jtk format -i src/**/*.java    # format in place
+./target/release/jtk format - < Foo.java        # stdin to stdout
+./target/release/jtk format --dry-run --set-exit-if-changed src/**/*.java   # CI check
 ```
+
+`jtk` without a command does everything that can be done automatically: it applies the safe fixes of the selected
+rules (including the Eclipse save actions of the default set), formats the files in place and prints the violations
+that remain; it exits with 1 if there are any. `jtk format` is the formatter alone, with the command line of
+palantir-java-format.
 
 The command line is compatible with the original's (`--help` lists all options): `-i`, `-`, `--assume-filename`,
 `--fix-imports-only`, `--skip-sorting-imports`, `--skip-removing-unused-imports`, `--skip-reflowing-long-strings`,
@@ -61,8 +67,8 @@ Differences from the original command line:
 ./target/release/jtk lint src                  # file:line:column: CODE message; exit 1 on violations, 2 on usage errors
 ./target/release/jtk check src                 # CI: unformatted files and violations in one pass
 ./target/release/jtk check -i src              # format in place, then lint the formatted files
-./target/release/jtk check --fix src           # apply automatic fixes, format in place, lint
-./target/release/jtk check --fix --unsafe-fixes src  # also apply the unsafe fixes (Eclipse save actions)
+./target/release/jtk check --fix src           # apply automatic fixes, format in place, lint (the same as jtk src)
+./target/release/jtk --unsafe-fixes src        # also apply the unsafe fixes
 ```
 
 `jtk lint` checks what the formatter leaves alone. The rules come from Checkstyle, PMD, Error Prone and the Eclipse
@@ -74,7 +80,7 @@ runs, chosen for few false alarms:
 | `B001`–`B004`, `B007`, `B009`–`B011`, `B014`–`B017`, `B019` | likely bugs: equals/hashCode, empty catch, fall-through, `==` on strings, null checks, ... |
 | `B026`, `B027` | unused local variables, private fields and methods |
 | `S001`–`S003`, `S006`–`S008` | simplifications: braces, boolean expressions, parentheses, semicolons, modifiers |
-| `M001`, `M004` | modernizations: `instanceof` patterns (Java 16), diamond operator (Java 7) |
+| `M001`, `M002`, `M004`, `M006`, `M007`, `M009`, `M010` | modernizations and Eclipse save actions: `instanceof` patterns (Java 16), switch rules (Java 14), diamond operator (Java 7), `var` (Java 10), enhanced `for`, text blocks (Java 15), multi-catch (Java 7) |
 | `N001`–`N012` | naming conventions, with Checkstyle's default formats |
 | `B035`–`B280` (19 rules) | from Error Prone, PMD, IntelliJ and others: comparisons with NaN or `compareTo == 1`, constant overflow, `^` as power, `(int) Math.random()`, invalid regular expressions, `YYYY` date patterns, exceptions created but not thrown, `throw null`, ... |
 | `S028`–`S137` (11 rules), `M043` | `extends Object`, duplicate `throws`, static access via instance, unnecessary `break`/`continue`, unused labels, `!(a == b)`, `size() == 0`, `new T[] {...}` in initializers, `Path.of` (Java 11) |
@@ -92,8 +98,8 @@ The other rules are the remaining Checkstyle checks, with Checkstyle's default p
 | `I001`–`I005` | star, illegal and static imports, unnecessarily qualified types |
 | `B005`–`B034` | missing `default`, inner assignments, parameter assignment, illegal catch/throws, `clone`/`finalize`, ... |
 | `S009`–`S021` | annotation order, `super()`, explicit initialization, one variable per declaration, array style, literal case, empty and nested blocks, block lambdas (most with fixes) |
-| `M002`–`M016` | switch expressions, `when` guards, unnamed variables (`_`), `final` parameters and locals, `@Deprecated`, `permits` |
-| `M006`, `M007`, `M009`, `M010`, `M012` | the remaining Eclipse save actions: `var`, enhanced `for`, text blocks, multi-catch, `final` fields |
+| `M003`–`M016` | `when` guards, unnamed variables (`_`), `final` parameters and locals, `@Deprecated`, `permits` |
+| `M012` | the remaining Eclipse save action: `final` fields |
 | `N013`, `N014` | abbreviations in names, illegal identifiers |
 | `A001`–`A017` | design: utility classes, final classes, visibility, overload order, magic numbers, file names, ... |
 | `C001`–`C022` | complexity and size: cyclomatic and cognitive complexity, lengths, counts, nesting depths |
@@ -112,7 +118,7 @@ Options:
   `jtk lint --fix` writes the fixed files unformatted.
 - `--unsafe-fixes` with `--fix` also applies the unsafe fixes, which may change the behaviour in edge cases, as in
   ruff: removing unused variables and private members (B026, B027), `"a".equals(s)` for `==` and literal-first
-  `equals` (B007, B008), `x == null` for `x.equals(null)` (B009), switch rules (M002), text blocks (M009) and
+  `equals` (B007, B008), `x == null` for `x.equals(null)` (B009), switch rules (M002) and
   multi-catch (M010), and among the rules from further tools `x % 2 != 0` (B090), `L` suffixes against overflow
   (B093), `throw` for exceptions created but not thrown (B219), `@Test` for JUnit 3 style methods (T001) and
   `start()` for `Thread.run()` (K001). Review their changes.
@@ -181,9 +187,9 @@ PMD ([docs/benchmark.md](docs/benchmark.md)).
 Fix where code is written, and only check in CI, so that no manual clean-up remains:
 
 - **Editor:** the VS Code extension's `source.fixAll.jtk` and format on save.
-- **AI agents:** [`editors/claude-code`](editors/claude-code) holds Claude Code hooks that run `jtk check --fix` after
+- **AI agents:** [`editors/claude-code`](editors/claude-code) holds Claude Code hooks that run `jtk` after
   each edit and before the agent finishes, and hand the remaining violations back to the agent.
-- **Commit:** the `jtk-check` hook for [pre-commit](https://pre-commit.com) runs `jtk check --fix` on the staged Java
+- **Commit:** the `jtk` hook for [pre-commit](https://pre-commit.com) runs `jtk` on the staged Java
   files:
 
   ```yaml
@@ -191,7 +197,7 @@ Fix where code is written, and only check in CI, so that no manual clean-up rema
     - repo: https://github.com/dhufnagel/jtk
       rev: v0.6.0
       hooks:
-        - id: jtk-check
+        - id: jtk
   ```
 
 - **CI:** `jtk check src` fails on unformatted files and violations without changing them;

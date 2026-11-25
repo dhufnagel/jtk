@@ -27,8 +27,8 @@ pub fn version_string() -> String {
     format!("jtk: Version {} (compatible with palantir-java-format 2.103.0)", env!("CARGO_PKG_VERSION"))
 }
 
-const USAGE: &str = "
-Usage: jtk [options] file(s)
+const FORMAT_USAGE: &str = "
+Usage: jtk format [options] file(s)
 
 Options:
   -i, -r, -replace, --replace
@@ -373,15 +373,50 @@ fn json_string(s: &str) -> String {
 /// Runs the command line tool; returns the exit code.
 pub fn run(args: &[String], stdin: &mut dyn Read, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     match args.split_first().map(|(command, rest)| (command.as_str(), rest)) {
-        Some(("lint", files)) => return lint_files(files, out, err),
-        Some(("check", args)) => return check_files(args, out, err),
-        _ => {}
+        Some(("format", args)) => format_command(args, stdin, out, err),
+        Some(("lint", args)) => lint_files(args, out, err),
+        Some(("check", args)) => check_files(args, Command::Check, out, err),
+        None | Some(("-h" | "-help" | "--help", [])) => {
+            let _ = write!(err, "{USAGE}\n{}\n", version_string());
+            0
+        }
+        Some(("-v" | "-version" | "--version", [])) => {
+            let _ = writeln!(err, "{}", version_string());
+            0
+        }
+        Some(_) => check_files(args, Command::Fix, out, err),
     }
+}
+
+const USAGE: &str = "Usage: jtk [options] path(s)
+
+Fixes, formats and lints the Java files: applies the safe fixes of the selected rules, formats the files in place
+and prints the violations that remain, one per line: file:line:column: CODE message. Directories are searched for
+.java files.
+  --select CODES  Only check rules whose code starts with one of the comma-separated prefixes (e.g. B,S001),
+                  ALL for all rules. Without it, the configured or default rules are checked.
+  --extend-select CODES  Also check the rules matching the prefixes.
+  --ignore CODES  Do not check rules whose code starts with one of the prefixes.
+  --java VERSION  The project's Java version: skip rules that suggest newer language features.
+  --unsafe-fixes  Also apply the fixes that may change the behaviour in edge cases.
+  --config FILE   The jtk.toml to use instead of the nearest one in each file's directory or above.
+  --output-format FORMAT  text (default) or json: one JSON object with the unformatted files and the
+                  violations, each with file, line, column, code, message and fix (safe, unsafe or null).
+Exits with 1 if violations remain or a file cannot be processed, and with 2 on usage or configuration errors.
+
+Commands:
+  jtk check   Format and lint without changing the files: reports unformatted files and violations (CI).
+  jtk lint    Lint only.
+  jtk format  Format only, with the command line of palantir-java-format (jtk format --help).
+  jtk lsp     Language server over stdin and stdout.";
+
+/// `jtk format`: the formatter, with the command line of palantir-java-format.
+fn format_command(args: &[String], stdin: &mut dyn Read, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let options = match parse(args).and_then(|o| validate(&o).map(|()| o)) {
         Ok(o) => o,
         Err(UsageError(message)) => {
             // Like the original, usage errors print the usage and exit with 0.
-            let _ = write!(err, "{message}\n{USAGE}\n{}\n", version_string());
+            let _ = write!(err, "{message}\n{FORMAT_USAGE}\n{}\n", version_string());
             return 0;
         }
     };
@@ -390,7 +425,7 @@ pub fn run(args: &[String], stdin: &mut dyn Read, out: &mut dyn Write, err: &mut
         return 0;
     }
     if options.help {
-        let _ = write!(err, "{USAGE}\n{}\n", version_string());
+        let _ = write!(err, "{FORMAT_USAGE}\n{}\n", version_string());
         return 0;
     }
     if options.stdin { format_stdin(&options, stdin, out, err) } else { format_files(&options, out, err) }
@@ -650,12 +685,20 @@ fn lint_jobs(o: &LintOptions, err: &mut dyn Write) -> Result<(Vec<LintJob>, bool
 
 /// Parses the options and prepares the files of `jtk lint` or `jtk check`, or prints the usage or configuration
 /// error and returns the exit code.
-fn prepare(args: &[String], check: bool, err: &mut dyn Write) -> Result<(LintOptions, Vec<LintJob>, bool), i32> {
-    let o = parse_lint_options(args, check).map_err(|message| {
-        let usage = if check { CHECK_USAGE } else { LINT_USAGE };
+fn prepare(args: &[String], command: Command, err: &mut dyn Write) -> Result<(LintOptions, Vec<LintJob>, bool), i32> {
+    let mut o = parse_lint_options(args, command != Command::Lint).map_err(|message| {
+        let usage = match command {
+            Command::Lint => LINT_USAGE,
+            Command::Check => CHECK_USAGE,
+            Command::Fix => USAGE,
+        };
         let _ = writeln!(err, "{message}\n\n{usage}");
         2
     })?;
+    if command == Command::Fix {
+        o.fix = true;
+        o.in_place = true;
+    }
     let (jobs, all_ok) = lint_jobs(&o, err).map_err(|message| {
         let _ = writeln!(err, "{message}");
         2
@@ -665,7 +708,7 @@ fn prepare(args: &[String], check: bool, err: &mut dyn Write) -> Result<(LintOpt
 
 /// `jtk lint`: reports the rule violations in the given files.
 fn lint_files(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let (o, jobs, mut all_ok) = match prepare(args, false, err) {
+    let (o, jobs, mut all_ok) = match prepare(args, Command::Lint, err) {
         Ok(prepared) => prepared,
         Err(code) => return code,
     };
@@ -701,9 +744,19 @@ fn lint_input(job: &LintJob, o: &LintOptions) -> Result<(String, Vec<Diagnostic>
     Ok((text, diagnostics))
 }
 
-/// `jtk check`: formats and lints the given files in one pass.
-fn check_files(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let (o, jobs, mut all_ok) = match prepare(args, true, err) {
+/// The commands that lint.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Command {
+    Lint,
+    /// `jtk check`: formats and lints, changing the files only with `-i` or `--fix`.
+    Check,
+    /// `jtk` without a command: `jtk check --fix`.
+    Fix,
+}
+
+/// `jtk check` and `jtk`: formats and lints the given files in one pass.
+fn check_files(args: &[String], command: Command, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    let (o, jobs, mut all_ok) = match prepare(args, command, err) {
         Ok(prepared) => prepared,
         Err(code) => return code,
     };

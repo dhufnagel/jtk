@@ -92,10 +92,10 @@ pub fn format(text: &str, options: &FormatOptions) -> Result<String, FormatError
     format_file(text, &[(0, text.len())], options)
 }
 
-/// Formats `text` like [`format`] and lints `linted`, or the formatted text if that is `None`, on the same thread:
-/// parsing is shared through the per-thread cache of the last syntax tree. `linted` is linted before formatting, so
-/// that formatting reuses its tree if it is `text`; the formatted text is linted after formatting, which parsed it
-/// last (unless long strings were reflowed).
+/// Formats `text` like [`format`], again until it no longer changes, and lints `linted`, or the formatted text if
+/// that is `None`, on the same thread: parsing is shared through the per-thread cache of the last syntax tree.
+/// `linted` is linted before formatting, so that formatting reuses its tree if it is `text`; the formatted text is
+/// linted after formatting, which parsed it last (unless long strings were reflowed).
 pub fn format_and_lint(
     text: &str,
     linted: Option<&str>,
@@ -106,14 +106,28 @@ pub fn format_and_lint(
     with_large_stack(|| match linted {
         Some(linted) => {
             let diagnostics = lint::lint_file(linted, path, settings)?;
-            Ok((format_on_current_thread(text, &[(0, text.len())], options)?, diagnostics))
+            Ok((format_until_stable(text, options)?, diagnostics))
         }
         None => {
-            let formatted = format_on_current_thread(text, &[(0, text.len())], options)?;
+            let formatted = format_until_stable(text, options)?;
             let diagnostics = lint::lint_file(&formatted, path, settings)?;
             Ok((formatted, diagnostics))
         }
     })
+}
+
+/// Formats the text again until it no longer changes. Like the original, the formatter needs a second pass for
+/// some code (the indentation of text blocks in some method arguments); more than three passes are not needed.
+fn format_until_stable(text: &str, options: &FormatOptions) -> Result<String, FormatError> {
+    let mut formatted = format_on_current_thread(text, &[(0, text.len())], options)?;
+    for _ in 0..2 {
+        let again = format_on_current_thread(&formatted, &[(0, formatted.len())], options)?;
+        if again == formatted {
+            break;
+        }
+        formatted = again;
+    }
+    Ok(formatted)
 }
 
 /// Like [`format`], but only formats the given byte ranges (extended to whole statements or declarations). As in

@@ -1,6 +1,6 @@
 # jtk for Claude Code
 
-[`jtk-hook.sh`](jtk-hook.sh) runs `jtk check --fix` on the Java files Claude changes. jtk applies its safe fixes and
+[`jtk-hook.sh`](jtk-hook.sh) runs `jtk` on the Java files Claude changes. jtk applies its safe fixes and
 formats the files; the violations it cannot fix go back to Claude (exit code 2), which resolves them in the same
 task instead of leaving them to a later clean-up.
 
@@ -34,4 +34,4 @@ Copy `jtk-hook.sh` to `.claude/hooks/` in the project and add the hooks to `.cla
 ```
 
 Files with existing violations block Claude as soon as it touches them. Before enabling the hooks in an existing
-project, run `jtk check --fix` once on the whole project and resolve or suppress what remains.
+project, run `jtk` once on the whole project and resolve or suppress what remains.

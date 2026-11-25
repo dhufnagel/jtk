@@ -12,7 +12,7 @@ input=$(cat)
 # Fixes and formats the files; on violations or syntax errors, prints them for Claude and exits with 2.
 check() {
     local out
-    if ! out=$(jtk check --fix "$@" 2>&1); then
+    if ! out=$(jtk "$@" 2>&1); then
         printf 'jtk reports problems it cannot fix. Fix them, or suppress a false alarm with // jtk:ignore[CODE] and the reason:\n%s\n' "$out" >&2
         exit 2
     fi

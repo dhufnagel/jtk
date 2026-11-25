@@ -372,8 +372,7 @@ fn text_block() {
 }
 "#;
     assert_eq!(violations("M009", source), ["2:16 M009", "5:16 M009"]);
-    assert_eq!(fixed("M009", source), source);
-    assert_eq!(unsafe_fixed("M009", source), expected);
+    assert_eq!(fixed("M009", source), expected);
 }
 
 /// A concatenation of thousands of literals takes linear time, and two files in a row do not affect each other.

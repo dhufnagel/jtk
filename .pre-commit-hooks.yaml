@@ -1,7 +1,7 @@
 # Hooks for the pre-commit framework (https://pre-commit.com): builds jtk with cargo on first use.
-- id: jtk-check
-  name: jtk check --fix
+- id: jtk
+  name: jtk
   description: Applies jtk's safe fixes, formats the Java files and fails on the violations jtk cannot fix.
-  entry: jtk check --fix
+  entry: jtk
   language: rust
   types: [java]

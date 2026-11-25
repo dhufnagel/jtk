@@ -39,9 +39,9 @@ impl Drop for Dir {
     }
 }
 
-/// Runs the tool, returning (exit code, stdout, stderr).
+/// Runs `jtk format`, returning (exit code, stdout, stderr).
 fn pjf(args: &[&str], stdin: &str) -> (i32, String, String) {
-    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let args: Vec<String> = std::iter::once("format").chain(args.iter().copied()).map(str::to_string).collect();
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = run(&args, &mut stdin.as_bytes(), &mut out, &mut err);
     (code, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
@@ -161,7 +161,7 @@ fn usage_errors_print_usage_and_exit_zero() {
         let (code, out, err) = pjf(args, "");
         assert_eq!((code, out.as_str()), (0, ""), "{args:?}");
         assert!(err.starts_with(&format!("{message}\n")), "{args:?}: {err}");
-        assert!(err.contains("Usage: jtk [options] file(s)"));
+        assert!(err.contains("Usage: jtk format [options] file(s)"));
     }
 }
 
@@ -176,4 +176,57 @@ fn files_after_the_first_file_are_all_files() {
 fn text_block_with_non_ascii_text() {
     let source = "class U {\n    String e = \"\"\"\n        \u{e4} x\n        \"\"\";\n}\n";
     assert_eq!(pjf(&["-"], source), (0, source.into(), String::new()));
+}
+
+/// Runs `jtk` with the arguments as given, returning (exit code, stdout, stderr).
+fn jtk(args: &[&str]) -> (i32, String, String) {
+    let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = run(&args, &mut std::io::empty(), &mut out, &mut err);
+    (code, String::from_utf8(out).unwrap(), String::from_utf8(err).unwrap())
+}
+
+#[test]
+fn without_a_command_fixes_formats_and_lints_in_place() {
+    let source = "class A {\n  void f(String s) {\n    if (s.equals(null)) return;\n  }\n}\n";
+    let d = Dir::new("default-mode", &[("A.java", source)]);
+    let (code, out, _) = jtk(&[&d.path("A.java")]);
+    // The braces are a safe fix; equals(null) has only an unsafe one.
+    let expected =
+        "class A {\n    void f(String s) {\n        if (s.equals(null)) {\n            return;\n        }\n    }\n}\n";
+    assert_eq!(d.read("A.java"), expected);
+    assert_eq!((code, out), (1, format!("{}:3:13: B009 equals(null) instead of == null\n", d.path("A.java"))));
+    assert_eq!(jtk(&["--unsafe-fixes", &d.path("A.java")]).0, 0);
+}
+
+#[test]
+fn without_arguments_prints_the_usage() {
+    let (code, out, err) = jtk(&[]);
+    assert_eq!((code, out.as_str()), (0, ""));
+    assert!(err.starts_with("Usage: jtk [options] path(s)"), "{err}");
+    let (code, _, err) = jtk(&["--bogus", "a.java"]);
+    assert_eq!(code, 2);
+    assert!(err.starts_with("unknown option: --bogus\n\nUsage: jtk [options] path(s)"), "{err}");
+}
+
+/// Like the original, the formatter needs a second pass for this text block; `jtk` and `jtk check` format until the
+/// text no longer changes, so that a second run changes nothing.
+#[test]
+fn formats_until_stable() {
+    let source = r#"class T {
+    List<Event> f(UUID contactId) {
+        return entityManager.createQuery(
+                """
+                        SELECT E FROM Event E
+                            WHERE E.tenant.id = :tenantId AND C.tenant.id = :tenantId AND C.contact.id = :contactId""",
+                Event.class
+        ).setParameter("tenantId", userContext.getTenantId()).setParameter("contactId", contactId).getResultList();
+    }
+}
+"#;
+    let d = Dir::new("stable", &[("T.java", source)]);
+    let once = pjf(&["-"], source).1;
+    assert_ne!(pjf(&["-"], &once).1, once, "the formatter is idempotent here now: find another example");
+    assert_eq!(jtk(&[&d.path("T.java")]).0, 0);
+    assert_eq!(jtk(&["check", &d.path("T.java")]), (0, String::new(), String::new()));
 }

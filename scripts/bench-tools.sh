@@ -47,7 +47,7 @@ files=$(wc -l < "$work/files.txt")
 echo "$files files in $src, best of $runs runs, $(nproc) cores"
 printf '%-44s %10s %10s\n' tool wall cpu
 measure "palantir-java-format (native image)" xargs -a "$work/files.txt" "$palantir" --palantir --dry-run
-measure "jtk" xargs -a "$work/files.txt" "$jtk" --dry-run
+measure "jtk" xargs -a "$work/files.txt" "$jtk" format --dry-run
 measure "Checkstyle ($(echo "$checkstyle_codes" | tr ',' '\n' | wc -l) rules)" \
   java -jar "$jar" -c "$work/checkstyle/checkstyle.xml" "$src"
 measure "jtk lint (the same rules)" xargs -a "$work/files.txt" "$jtk" lint --select "$checkstyle_codes"
