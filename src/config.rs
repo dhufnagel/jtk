@@ -10,7 +10,7 @@ use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::Deserialize;
 
 use crate::formatter::FormatOptions;
-use crate::lint::{RuleOptions, Selection, Settings};
+use crate::lint::{FixPolicy, RuleOptions, Selection, Settings};
 
 pub const FILE_NAME: &str = "jtk.toml";
 
@@ -42,6 +42,10 @@ struct LintSection {
     ignore: Vec<String>,
     /// Rule code prefixes not to check in the files matching a pattern.
     per_file_ignores: BTreeMap<String, Vec<String>>,
+    /// Rule code prefixes whose violations are reported without fixes.
+    unfixable: Vec<String>,
+    /// Rule code prefixes whose unsafe fixes count as safe.
+    extend_safe_fixes: Vec<String>,
     options: RuleOptions,
 }
 
@@ -80,6 +84,7 @@ impl Config {
         Selection::new(lint.select.clone(), lint.ignore.clone())
             .and_then(|s| s.extended(lint.extend_select.clone()))
             .and_then(|_| Selection::new(Vec::new(), codes))
+            .and_then(|_| fix_policy(lint))
             .map_err(error)?;
         let exclude = glob_set(&file.exclude).map_err(error)?;
         let per_file_ignores = lint
@@ -123,13 +128,17 @@ impl Config {
             Some(version) => selection.with_java_version(version),
             None => selection,
         };
-        Ok(Settings { selection, options: lint.options.clone() })
+        Ok(Settings { selection, options: lint.options.clone(), fixes: fix_policy(lint)? })
     }
 
     fn relative(&self, file: &Path) -> PathBuf {
         let file = std::path::absolute(file).unwrap_or_else(|_| file.to_path_buf());
         file.strip_prefix(&self.dir).map(Path::to_path_buf).unwrap_or(file)
     }
+}
+
+fn fix_policy(lint: &LintSection) -> Result<FixPolicy, String> {
+    FixPolicy::new(lint.unfixable.clone(), lint.extend_safe_fixes.clone())
 }
 
 /// Patterns as in `.gitignore` files: `*` does not match `/`, and `**` matches any directories.

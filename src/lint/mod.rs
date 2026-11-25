@@ -294,7 +294,7 @@ impl Selection {
     }
 
     fn includes(&self, rule: Rule) -> bool {
-        let matches = |prefix: &String| prefix == "ALL" || rule.code().starts_with(prefix.as_str());
+        let matches = |prefix: &String| rule.matches(prefix);
         let selected = if self.select.is_empty() { rule.is_default() } else { self.select.iter().any(matches) };
         let selected = selected || self.extend.iter().any(matches);
         let supported = self.java_version.is_none_or(|v| rule.java_version() <= v);
@@ -302,16 +302,50 @@ impl Selection {
     }
 }
 
-/// The selected rules and their parameters.
+impl Rule {
+    /// Whether the rule's code starts with the prefix, or the prefix is `ALL`.
+    fn matches(self, prefix: &str) -> bool {
+        prefix == "ALL" || self.code().starts_with(prefix)
+    }
+}
+
+/// Which fixes may be applied, as in ruff: the violations of `unfixable` rules are reported without their fixes,
+/// and the unsafe fixes of `safe` rules count as safe, so that `--fix` applies them without `--unsafe-fixes`.
+#[derive(Debug, Clone, Default)]
+pub struct FixPolicy {
+    unfixable: Vec<String>,
+    safe: Vec<String>,
+}
+
+impl FixPolicy {
+    /// Fails on a code prefix that matches no rule.
+    pub fn new(unfixable: Vec<String>, safe: Vec<String>) -> Result<FixPolicy, String> {
+        Selection::new(unfixable.iter().chain(&safe).cloned().collect(), Vec::new())?;
+        Ok(FixPolicy { unfixable, safe })
+    }
+
+    fn apply(&self, diagnostic: &mut Diagnostic) {
+        let rule = diagnostic.rule;
+        if self.unfixable.iter().any(|prefix| rule.matches(prefix)) {
+            diagnostic.fix.clear();
+            diagnostic.unsafe_fix = false;
+        } else if self.safe.iter().any(|prefix| rule.matches(prefix)) {
+            diagnostic.unsafe_fix = false;
+        }
+    }
+}
+
+/// The selected rules, their parameters and which of their fixes may be applied.
 #[derive(Debug, Clone, Default)]
 pub struct Settings {
     pub selection: Selection,
     pub options: RuleOptions,
+    pub fixes: FixPolicy,
 }
 
 impl From<Selection> for Settings {
     fn from(selection: Selection) -> Settings {
-        Settings { selection, options: RuleOptions::default() }
+        Settings { selection, ..Settings::default() }
     }
 }
 
@@ -340,6 +374,7 @@ fn lint_on_current_thread(
     tree::check(&unit, &mut context, &settings.selection, &mut diagnostics);
     let suppressions = suppression::Suppressions::find(&unit, text, context.tokens());
     diagnostics.retain(|d| !suppressions.suppresses(d));
+    diagnostics.iter_mut().for_each(|d| settings.fixes.apply(d));
     diagnostics.sort_by_key(|d| d.offset);
     Ok(diagnostics)
 }

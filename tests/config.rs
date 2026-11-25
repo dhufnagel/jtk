@@ -118,3 +118,32 @@ fn rule_parameters_have_checkstyle_names() {
     let codes: Vec<&str> = out.lines().map(|l| l.split(' ').nth(1).unwrap()).collect();
     assert_eq!(codes, ["I002", "N013", "A015"]);
 }
+
+const NULL_CHECK: &str =
+    "class A {\n    boolean f(String x) {\n        if (x.equals(null)) return true;\n        return false;\n    }\n}\n";
+
+#[test]
+fn fix_policy_decides_which_fixes_apply() {
+    let config = "[lint]\nselect = [\"S001\", \"B009\"]\nunfixable = [\"S001\"]\nextend-safe-fixes = [\"B009\"]\n";
+    let d = Dir::new("fix-policy", &[("jtk.toml", config), ("A.java", NULL_CHECK)]);
+    let (code, out, _) = jtk(&d, &["lint", "--fix", &d.path("A.java")]);
+    assert_eq!((code, out.as_str()), (1, "A.java:3:9: S001 'if' body without braces\n"));
+    let fixed = std::fs::read_to_string(d.path("A.java")).unwrap();
+    assert!(fixed.contains("if (x == null) return true;"), "{fixed}");
+}
+
+#[test]
+fn reports_as_json() {
+    let source = "class A {\n    boolean f(String x) {\n        if (x.equals(null)) return true;\n            return false;\n    }\n}\n";
+    let d = Dir::new("json", &[("A.java", source)]);
+    let (code, out, _) = jtk(&d, &["check", "--output-format", "json", &d.path("A.java")]);
+    let report: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let expected = serde_json::json!({
+        "unformatted": ["A.java"],
+        "violations": [
+            {"file": "A.java", "line": 3, "column": 9, "code": "S001", "message": "'if' body without braces", "fix": "safe"},
+            {"file": "A.java", "line": 3, "column": 13, "code": "B009", "message": "equals(null) instead of == null", "fix": "unsafe"},
+        ],
+    });
+    assert_eq!((code, report), (1, expected));
+}

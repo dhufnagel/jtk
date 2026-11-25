@@ -111,6 +111,9 @@ Options:
   `--extend-select` adds rules to the selected or default set.
 - `--java VERSION` skips rules that suggest newer language features than the project's Java version.
 - `--config FILE` uses the given `jtk.toml` for all files.
+- `--output-format json` prints one JSON object instead of text lines, for CI and AI agents:
+  `{"unformatted": ["A.java"], "violations": [{"file": "A.java", "line": 3, "column": 9, "code": "S001",
+  "message": "...", "fix": "safe"}]}`. `fix` is `safe`, `unsafe` or `null` (no fix), after the fix settings below.
 
 ### Configuration
 
@@ -131,6 +134,8 @@ format-javadoc = false
 select = ["ALL"]                   # as --select, which replaces it
 extend-select = ["C022"]           # --extend-select adds to it
 ignore = ["A015"]                  # --ignore adds to it
+unfixable = ["B026", "B027"]       # report these violations, but never fix them
+extend-safe-fixes = ["M002"]       # apply these unsafe fixes with --fix alone
 
 [lint.per-file-ignores]
 "src/test/**" = ["B022", "C"]

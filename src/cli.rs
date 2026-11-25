@@ -537,6 +537,8 @@ Prints one line per rule violation: file:line:column: CODE message. Directories 
   --fix           Apply automatic fixes in place, and report the remaining violations.
   --unsafe-fixes  With --fix, also apply the fixes that may change the behaviour in edge cases.
   --config FILE   The jtk.toml to use instead of the nearest one in each file's directory or above.
+  --output-format FORMAT  text (default) or json: one JSON object with the unformatted files and the
+                  violations, each with file, line, column, code, message and fix (safe, unsafe or null).
 Exits with 1 if there are violations or errors, and with 2 on usage or configuration errors.";
 
 const CHECK_USAGE: &str = "Usage: jtk check [options] path(s)
@@ -552,6 +554,8 @@ file:line:column: CODE message. Directories are searched for .java files.
   --fix           Apply automatic fixes before formatting (implies -i).
   --unsafe-fixes  With --fix, also apply the fixes that may change the behaviour in edge cases.
   --config FILE   The jtk.toml to use instead of the nearest one in each file's directory or above.
+  --output-format FORMAT  text (default) or json: one JSON object with the unformatted files and the
+                  violations, each with file, line, column, code, message and fix (safe, unsafe or null).
 Exits with 1 if a file is not formatted (without -i), has violations or errors, and with 2 on usage or
 configuration errors.";
 
@@ -563,6 +567,7 @@ struct LintOptions {
     unsafe_fixes: bool,
     arguments: LintArguments,
     config: Option<String>,
+    json: bool,
 }
 
 fn parse_lint_options(args: &[String], allow_in_place: bool) -> Result<LintOptions, String> {
@@ -572,6 +577,7 @@ fn parse_lint_options(args: &[String], allow_in_place: bool) -> Result<LintOptio
     let mut unsafe_fixes = false;
     let mut arguments = LintArguments::default();
     let mut config = None;
+    let mut json = false;
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
@@ -583,6 +589,7 @@ fn parse_lint_options(args: &[String], allow_in_place: bool) -> Result<LintOptio
             "--ignore" => arguments.ignore.extend(rule_codes(it.next())?),
             "--java" => arguments.java = Some(parse_java_version(it.next())?),
             "--config" => config = Some(it.next().ok_or("missing configuration file")?.clone()),
+            "--output-format" => json = parse_output_format(it.next())?,
             flag if flag.starts_with('-') => return Err(format!("unknown option: {flag}")),
             path => paths.push(path.to_string()),
         }
@@ -592,7 +599,17 @@ fn parse_lint_options(args: &[String], allow_in_place: bool) -> Result<LintOptio
     }
     Selection::new(arguments.select.clone(), arguments.ignore.clone())?.extended(arguments.extend_select.clone())?;
     let in_place = in_place || (fix && allow_in_place);
-    Ok(LintOptions { paths, in_place, fix, unsafe_fixes, arguments, config })
+    Ok(LintOptions { paths, in_place, fix, unsafe_fixes, arguments, config, json })
+}
+
+/// Whether the output format is JSON.
+fn parse_output_format(arg: Option<&String>) -> Result<bool, String> {
+    match arg.map(String::as_str) {
+        Some("text") => Ok(false),
+        Some("json") => Ok(true),
+        Some(other) => Err(format!("unknown output format: {other}")),
+        None => Err("missing output format".to_string()),
+    }
 }
 
 /// `17`, or `1.8` for 8.
@@ -653,6 +670,7 @@ fn lint_files(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 
         Err(code) => return code,
     };
     let results = map_parallel(&jobs, |job| lint_input(job, &o));
+    let mut report = Report::new(o.json, out);
     for (job, result) in jobs.iter().zip(results) {
         let file = &job.file;
         match result {
@@ -663,7 +681,7 @@ fn lint_files(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 
                     let _ = writeln!(err, "{file}: could not write file: {e}");
                     all_ok = false;
                 }
-                all_ok &= report_violations(file, &text, &diagnostics, out);
+                all_ok &= report.violations(file, &text, &diagnostics);
             }
             Err(e) => {
                 let _ = writeln!(err, "{file}:{e}");
@@ -671,6 +689,7 @@ fn lint_files(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 
             }
         }
     }
+    report.finish();
     if all_ok { 0 } else { 1 }
 }
 
@@ -689,6 +708,7 @@ fn check_files(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32
         Err(code) => return code,
     };
     let results = map_parallel(&jobs, |job| check_input(job, &o));
+    let mut report = Report::new(o.json, out);
     for (job, result) in jobs.iter().zip(results) {
         let (file, input) = (&job.file, &job.text);
         let (formatted, diagnostics) = match result {
@@ -706,12 +726,13 @@ fn check_files(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32
                 all_ok = false;
             }
         } else if changed {
-            let _ = writeln!(out, "{file}: not formatted");
+            report.unformatted(file);
             all_ok = false;
         }
         let on_disk = if o.in_place { &formatted } else { input };
-        all_ok &= report_violations(file, on_disk, &diagnostics, out);
+        all_ok &= report.violations(file, on_disk, &diagnostics);
     }
+    report.finish();
     if all_ok { 0 } else { 1 }
 }
 
@@ -724,17 +745,63 @@ fn check_input(job: &LintJob, o: &LintOptions) -> Result<(String, Vec<Diagnostic
     format_and_lint(&fixed, linted, Some(Path::new(&job.file)), &job.format, &job.settings)
 }
 
-/// Prints the violations as `file:line:column: CODE message`; returns whether there were none.
-/// The diagnostics are ordered by position, so lines are counted from the previous one rather than from the start.
-fn report_violations(file: &str, text: &str, diagnostics: &[Diagnostic], out: &mut dyn Write) -> bool {
-    let (mut counted_to, mut lines_before) = (0, 0);
-    for d in diagnostics {
-        let (line_in_rest, column) = newlines::line_column(&text[counted_to..], d.offset - counted_to);
-        let line = lines_before + line_in_rest;
-        let line_start = text[..d.offset].rfind(['\n', '\r']).map_or(0, |i| i + 1).max(counted_to);
-        lines_before = line - 1;
-        counted_to = line_start;
-        let _ = writeln!(out, "{file}:{line}:{column}: {} {}", d.rule.code(), d.message);
+/// The unformatted files and the violations: printed as they are found as `file: not formatted` and
+/// `file:line:column: CODE message` lines, or collected and printed at the end as one JSON object.
+struct Report<'a> {
+    out: &'a mut dyn Write,
+    json: bool,
+    unformatted: Vec<String>,
+    violations: Vec<serde_json::Value>,
+}
+
+impl<'a> Report<'a> {
+    fn new(json: bool, out: &'a mut dyn Write) -> Report<'a> {
+        Report { out, json, unformatted: Vec::new(), violations: Vec::new() }
     }
-    diagnostics.is_empty()
+
+    fn unformatted(&mut self, file: &str) {
+        if self.json {
+            self.unformatted.push(file.to_string());
+        } else {
+            let _ = writeln!(self.out, "{file}: not formatted");
+        }
+    }
+
+    /// Reports the violations of a file; returns whether there were none.
+    /// The diagnostics are ordered by position, so lines are counted from the previous one rather than from the start.
+    fn violations(&mut self, file: &str, text: &str, diagnostics: &[Diagnostic]) -> bool {
+        let (mut counted_to, mut lines_before) = (0, 0);
+        for d in diagnostics {
+            let (line_in_rest, column) = newlines::line_column(&text[counted_to..], d.offset - counted_to);
+            let line = lines_before + line_in_rest;
+            let line_start = text[..d.offset].rfind(['\n', '\r']).map_or(0, |i| i + 1).max(counted_to);
+            lines_before = line - 1;
+            counted_to = line_start;
+            self.violation(file, line, column, d);
+        }
+        diagnostics.is_empty()
+    }
+
+    fn violation(&mut self, file: &str, line: usize, column: usize, d: &Diagnostic) {
+        let code = d.rule.code();
+        if !self.json {
+            let _ = writeln!(self.out, "{file}:{line}:{column}: {code} {}", d.message);
+            return;
+        }
+        let fix = match (d.fix.is_empty(), d.unsafe_fix) {
+            (true, _) => None,
+            (false, true) => Some("unsafe"),
+            (false, false) => Some("safe"),
+        };
+        self.violations.push(serde_json::json!({
+            "file": file, "line": line, "column": column, "code": code, "message": d.message, "fix": fix,
+        }));
+    }
+
+    fn finish(self) {
+        if self.json {
+            let report = serde_json::json!({ "unformatted": self.unformatted, "violations": self.violations });
+            let _ = writeln!(self.out, "{report}");
+        }
+    }
 }
