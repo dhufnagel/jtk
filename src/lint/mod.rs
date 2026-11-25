@@ -252,6 +252,13 @@ rules! {
     IncompleteMockitoCall "T062" [] [],
     HardcodedCryptoKey "V008" [] ["HardCodedCryptoKey"],
     BidiCharacter "V014" [] [],
+    DefaultTimeZone "B148" [] [],
+    ReturnNullCollection "B174" [] ["ReturnEmptyCollectionRatherThanNull"],
+    UnnecessaryConstructor "S030" [] ["UnnecessaryConstructor"],
+    CollectorToList "S155" [] [],
+    PublicConstructorInAbstractClass "A020" [] [],
+    CommentedOutCode "A101" [] [],
+    ConcatenatedLogMessage "L008" [] [],
 }
 
 impl Rule {
@@ -260,6 +267,8 @@ impl Rule {
         match self {
             Rule::InstanceofPattern => 16,
             Rule::PathOf => 11,
+            Rule::CollectorToList => 16,
+            Rule::ReturnNullCollection => 9,
             Rule::DiamondOperator => 7,
             Rule::EnhancedSwitch => 14,
             Rule::UseVar => 10,
@@ -285,7 +294,8 @@ impl Rule {
             "K023", "K024", "K026", "K027", "K042", "K043", "K047", "K058", "L002", "L004", "L006", "L009", "M043",
             "N015", "S028", "S036", "S047", "S056", "S057", "S059", "S070", "S102", "S113", "S129", "S137", "T001",
             "T004", "T005", "T009", "T025", "T032", "T033", "T035", "T037", "T040", "T049", "T060", "T062", "V008",
-            "V014",
+            "V014", // Rules that SonarQube's default profile also reports.
+            "A020", "A101", "B148", "B174", "L008", "S030", "S155",
         ];
         DEFAULT.contains(&self.code()) || self.code().starts_with('N') && self.code() <= "N012"
     }

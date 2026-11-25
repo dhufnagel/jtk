@@ -58,6 +58,10 @@ mod string_builder_char;
 mod suspicious_date_pattern;
 mod throw_null;
 
+// Batch 7.
+mod default_time_zone;
+mod return_null_collection;
+
 use super::Rule;
 
 use jtk_parser::ast::Tag;
@@ -115,4 +119,7 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::ExceptionNotThrown, &[Tag::ExprStmt], exception_not_thrown::check),
     (Rule::SerialVersionUid, &[Tag::Vars], serial_version_uid::check),
     (Rule::ThrowNull, &[Tag::Throw], throw_null::check),
+    // Batch 7.
+    (Rule::DefaultTimeZone, &[Tag::MethodInvocation], default_time_zone::check),
+    (Rule::ReturnNullCollection, &[Tag::Return], return_null_collection::check),
 ];

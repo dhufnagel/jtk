@@ -6,6 +6,9 @@ mod placeholder_count;
 pub(super) mod shared;
 mod throwable_not_last;
 
+// Batch 7.
+mod concatenated_log_message;
+
 use super::Rule;
 
 use jtk_parser::ast::Tag;
@@ -16,4 +19,6 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::PlaceholderCount, &[Tag::MethodInvocation], placeholder_count::check),
     (Rule::ThrowableNotLast, &[Tag::MethodInvocation], throwable_not_last::check),
     (Rule::LogGuardLevel, &[Tag::If], log_guard_level::check),
+    // Batch 7.
+    (Rule::ConcatenatedLogMessage, &[Tag::MethodInvocation], concatenated_log_message::check),
 ];

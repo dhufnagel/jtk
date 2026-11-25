@@ -20,6 +20,10 @@ mod protected_in_final_class;
 
 use jtk_parser::ast::{ClassDecl, K, Tag, Tree};
 
+// Batch 7.
+mod commented_out_code;
+mod public_constructor_in_abstract_class;
+
 use super::Rule;
 
 /// The checks on the AST, with the kinds of trees each checks.
@@ -39,6 +43,9 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::OuterTypeFilename, &[Tag::CompilationUnit], outer_type_filename::check),
     (Rule::ProtectedInFinalClass, &[Tag::Class], protected_in_final_class::check),
     (Rule::MutablePublicArray, &[Tag::Vars], mutable_public_array::check),
+    // Batch 7.
+    (Rule::PublicConstructorInAbstractClass, &[Tag::Class], public_constructor_in_abstract_class::check),
+    (Rule::CommentedOutCode, &[Tag::CompilationUnit], commented_out_code::check),
 ];
 
 /// The qualified name of a type or package (or annotation) without type arguments and annotations: `a.b.C<D>` is

@@ -87,6 +87,7 @@ runs, chosen for few false alarms:
 | `L002`–`L009` | logging: foreign logger class, placeholder count, exception not last, guard level |
 | `K001`–`K058` (13 rules) | concurrency: `Thread.run()`, threads never started, `wait()` outside loops, locks without `try`/`finally`, `synchronized` on non-final fields or boxed values, static formatters, ... |
 | `V008`, `V014` | hard-coded crypto keys, Unicode bidi control characters |
+| `A020`, `A101`, `B148`, `B174`, `L008`, `S030`, `S155` | issues SonarQube also reports: public constructors of abstract classes, commented-out code, `now()` without time zone, `return null` for collections, concatenated log messages, unnecessary default constructors, `collect(Collectors.toList())` (Java 16) |
 
 The other rules are the remaining Checkstyle checks, with Checkstyle's default properties and limits, and PMD rules
 (B016–B019, B022, B028, S004, S005, S010, S019, A010, A011, C022) with PMD's defaults:

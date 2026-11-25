@@ -36,6 +36,10 @@ mod unused_label;
 
 use std::ops::Range;
 
+// Batch 7.
+mod collector_to_list;
+mod unnecessary_constructor;
+
 use super::{Edit, Rule};
 
 use jtk_parser::ast::Tag;
@@ -115,6 +119,9 @@ pub(super) const TREE_CHECKS: &[(Rule, &[Tag], super::tree::TreeCheck)] = &[
     (Rule::SizeEqualsZero, &[Tag::Binary], size_equals_zero::check),
     (Rule::IdentityConversion, &[Tag::MethodInvocation], identity_conversion::check),
     (Rule::ArrayCreationInInitializer, &[Tag::NewArray], array_creation_in_initializer::check),
+    // Batch 7.
+    (Rule::UnnecessaryConstructor, &[Tag::Class], unnecessary_constructor::check),
+    (Rule::CollectorToList, &[Tag::MethodInvocation], collector_to_list::check),
 ];
 
 /// The range that removes a token or annotation together with the whitespace after it on the same line.

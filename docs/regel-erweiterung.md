@@ -36,6 +36,8 @@ Die Einstufung ist eine Schätzung aus den Regelbeschreibungen, nicht aus einer 
 
 **Stand 25.11.2026:** 66 der 69 ★-Regeln sind umgesetzt und im Standard-Set (`src/lint/`, neue Gruppen T, L, K, V). Nicht umgesetzt sind S023 und P016, die nach der Stichprobe nur kosmetisch sind, und M041, das ab Java 18 (UTF-8 als Standard-Charset, JEP 400) kaum noch zutrifft. Wo eine Regel ohne Typen enger ist als im Original, beschreibt das ihr Modulkommentar. Auf digitale-praxis und miya-documentation melden die neuen Regeln 6 Verstöße (S137 3×, M043 2×, S113 1×), alle echt; die Fixes sind zusammen mit der Formatierung idempotent.
 
+**Nachtrag 25.11.2026:** Nach einem Abgleich mit SonarQube (miya-documentation, Backend) sind zusätzlich A020, A101, B148, B174, L008, S030 und S155 umgesetzt und im Standard-Set (✅ umgesetzt in der Tabelle). Abweichend vom Katalog: B148 hat einen sicheren Fix (`now(ZoneId.systemDefault())` ist gleichwertig), A101 einen unsicheren (Löschen des Kommentars), S155 meldet nur `toList()`/`toUnmodifiableList()`, weil `Stream` kein `toSet()` hat. Von 129 offenen Sonar-Issues findet jtk damit 57; der Rest ist Field Injection (62, bewusst nicht umgesetzt), verworfene Regeln (A016, C018), Daten- und Taint-Analyse oder Regex-Komplexität.
+
 | Kategorie | Neue Regeln | Codes | ★ |
 |---|---:|---|---:|
 | B Fehlerquellen | 250 | B035–B284 | 19 |
@@ -180,7 +182,7 @@ Neue Kategorien: **E** Exception- und Ressourcen-Design, **P** Performance, **T*
 | B145 | Doppelter Schlüssel oder Element (Map.of, Set.of, put) | 2* | – | errorprone:DistinctVarargsChecker, errorprone:DuplicateMapKeys, intellij:OverwrittenKey | `Map.ofEntries(entry("a", 1), entry("a", 2)); map.put("a", 1); map.put("a", 2);` |  |
 | B146 | Implizite Default-Locale | 2* | ⚠️ | errorprone:DefaultLocale, pmd:UseLocaleWithCaseConversions, intellij:StringToUpperWithoutLocale, errorprone:StringCaseLocaleUsage, intellij:SimpleDateFormatWithoutLocale, pmd:SimpleDateFormatNeedsLocale, forbidden-apis:jdk-unsafe, forbidden-apis:incr-jdk-unsafe | `s.toLowerCase()` → `s.toLowerCase(Locale.ROOT)` | forbidden-apis jdk-unsafe umfasst auch Charset und Zeitzone |
 | B147 | Implizites Default-Charset | 2* | ⚠️ | errorprone:DefaultCharset, intellij:ImplicitDefaultCharsetUsage, pmd:RelianceOnDefaultCharset, forbidden-apis:commons-io-unsafe | `new FileReader(f)` → `new FileReader(f, UTF_8)` |  |
-| B148 | Implizite System-Zeitzone oder -Uhr | 2 | ⚠️ | errorprone:JavaTimeDefaultTimeZone, baseline:JavaTimeSystemDefaultTimeZone, picnic:TimeZoneUsage | `LocalDate.now()` → `LocalDate.now(clock)` |  |
+| B148 | Implizite System-Zeitzone oder -Uhr ✅ umgesetzt | 2 | ✅ | errorprone:JavaTimeDefaultTimeZone, baseline:JavaTimeSystemDefaultTimeZone, picnic:TimeZoneUsage | `LocalDate.now()` → `LocalDate.now(ZoneId.systemDefault())` |  |
 | B149 | Unsichere Locale-Erzeugung | 2* | ⚠️ | errorprone:UnsafeLocaleUsage | `new Locale("en_US")` → `Locale.forLanguageTag("en-US")` |  |
 | B150 | Verdächtiges Datumsmuster (YYYY, DD) ★ | 2 | ✅ | errorprone:MisusedWeekYear, errorprone:MisusedDayOfYear, intellij:SuspiciousDateFormat | `"YYYY-MM-dd"` → `"yyyy-MM-dd"` |  |
 | B151 | Ungültiges Datumsmuster | 2 | – | intellij:IncorrectDateTimeFormat | `DateTimeFormatter.ofPattern("TT")` |  |
@@ -206,7 +208,7 @@ Neue Kategorien: **E** Exception- und Ressourcen-Design, **P** Performance, **T*
 | B171 | List.remove mit int bei List<Integer> | 2* | – | errorprone:ListRemoveAmbiguous | `List<Integer> l; l.remove(i)` |  |
 | B172 | Unpassender Argumenttyp für Collection-/Arrays-Methode | 2* | – | intellij:SuspiciousMethodCalls, eclipse:COMPILER_PB_UNLIKELY_COLLECTION_METHOD_ARGUMENT_TYPE, pmd:CollectionTypeMismatch, intellij:SuspiciousArrayMethodCall | `List<String> l; l.contains(42)` |  |
 | B173 | Temporäre Collection in-place geändert | 2 | – | errorprone:UnusedCollectionModifiedInPlace | `Collections.sort(new ArrayList<>(list))` |  |
-| B174 | null statt leerer Collection zurückgegeben | 1 | ⚠️ | pmd:ReturnEmptyCollectionRatherThanNull, errorprone:ReturnsNullCollection | `List<X> f() { return null; }` → `return List.of();` |  |
+| B174 | null statt leerer Collection zurückgegeben ✅ umgesetzt | 1 | ⚠️ | pmd:ReturnEmptyCollectionRatherThanNull, errorprone:ReturnsNullCollection | `List<X> f() { return null; }` → `return List.of();` |  |
 | B175 | Hashtable.contains statt containsValue | 2* | ✅ | errorprone:HashtableContains | `table.contains(v)` → `table.containsValue(v)` |  |
 | B176 | Properties mit put/get statt setProperty/getProperty | 2* | ⚠️ | intellij:UseOfPropertiesAsHashtable | `p.put("k", "v")` → `p.setProperty("k", "v")` |  |
 | B177 | IdentityHashMap mit Wrapper-Schlüssel | 2 | – | errorprone:IdentityHashMapBoxing | `new IdentityHashMap<Integer, V>()` |  |
@@ -349,7 +351,7 @@ Neue Kategorien: **E** Exception- und Ressourcen-Design, **P** Performance, **T*
 | S027 | @SafeVarargs bei reifizierbarem Varargs-Typ | 2 | ✅ | intellij:SafeVarargsOnNonReifiableType | `@SafeVarargs static void f(String... s)` → `static void f(String... s)` |  |
 | S028 | Überflüssiges extends Object (Klasse, Typparameter) ★ | 1 | ✅ | pmd:ExtendsObject, intellij:ExtendsObject, errorprone:ExtendsObject, intellij:TypeParameterExtendsObject | `class A extends Object` → `class A; <T extends Object>` → `<T>` |  |
 | S029 | Interface schon durch Oberklasse implementiert | 2* | ✅ | eclipse:COMPILER_PB_REDUNDANT_SUPERINTERFACE, pmd:UnnecessaryInterfaceDeclaration | `class B extends A implements I (A implements I)` → `class B extends A` | nur wenn die Oberklasse in der Datei steht |
-| S030 | Überflüssiger Default-Konstruktor | 1 | ✅ | intellij:UnnecessaryConstructor, pmd:UnnecessaryConstructor | `public class A { public A() {} }` → `public class A {}` | nur einziger Konstruktor, gleiche Sichtbarkeit wie die Klasse, ohne Javadoc |
+| S030 | Überflüssiger Default-Konstruktor ✅ umgesetzt | 1 | ✅ | intellij:UnnecessaryConstructor, pmd:UnnecessaryConstructor | `public class A { public A() {} }` → `public class A {}` | nur einziger Konstruktor, gleiche Sichtbarkeit wie die Klasse, ohne Javadoc |
 | S031 | Überflüssiger Record-Konstruktor | 1 | ✅ | intellij:RedundantRecordConstructor | `record P(int x) { public P {} }` → `record P(int x) {}` |  |
 | S032 | Leerer Methoden-/Konstruktorrumpf ohne Kommentar | 1 | – | pmd:UncommentedEmptyConstructor, pmd:UncommentedEmptyMethodBody | `void f() {}` |  |
 | S033 | Überschreibende Methode ruft nur super auf | 1 | ⚠️ | intellij:RedundantMethodOverride, errorprone:RedundantOverride, pmd:UselessOverridingMethod | `@Override void f(int x) { super.f(x); }` → `entfernen` | Fix unsafe: Annotationen/Javadoc/Sichtbarkeit können abweichen |
@@ -474,7 +476,7 @@ Neue Kategorien: **E** Exception- und Ressourcen-Design, **P** Performance, **T*
 | S152 | forEach durch passendere Stream-Operation ersetzbar | 2* | ⚠️ | intellij:SimplifyForEach | `stream.forEach(x -> list.add(x))` → `collect(toList())` |  |
 | S153 | Nachgelagerte Transformation in Stream-Kette ziehbar | 2 | ⚠️ | intellij:FuseStreamOperations | `new HashSet<>(s.collect(toList()))` → `s.collect(toSet())` |  |
 | S154 | Vereinfachbarer Collector | 2* | ✅ | intellij:SimplifyCollector | `collect(groupingBy(f, collectingAndThen(…)))` → `toMap(…)` |  |
-| S155 | Collectors.toList/toSet ohne festgelegte Veränderlichkeit | 2 | ⚠️ | picnic:CollectorMutability | `collect(Collectors.toList())` → `toList() / toCollection(ArrayList::new)` |  |
+| S155 | Collectors.toList/toSet ohne festgelegte Veränderlichkeit ✅ umgesetzt | 2 | ⚠️ | picnic:CollectorMutability | `collect(Collectors.toList())` → `toList()` |  |
 | S156 | rangeClosed(a, b - 1) statt range(a, b) | 2 | ⚠️ | picnic:IntStreamRules.IntStreamRange, picnic:LongStreamRules.LongStreamRange | `IntStream.rangeClosed(0, n - 1)` → `IntStream.range(0, n)` | unsafe: Überlauf bei MIN_VALUE |
 | S157 | Überflüssiges Standardargument (naturalOrder(), joining("")) | 2 | ✅ | picnic:CollectionRules.CollectionsSort+CollectionsMin+CollectionsMax, picnic:StreamRules.Joining+StreamSorted | `Collections.sort(l, naturalOrder())` → `Collections.sort(l); joining("")` → `joining()` |  |
 | S158 | Umständlich formulierte natürliche/umgekehrte Ordnung | 2 | ✅ | picnic:ComparatorRules.NaturalOrder+ReverseOrder | `Collections.reverseOrder()` → `Comparator.reverseOrder()` |  |
@@ -618,7 +620,7 @@ Neue Kategorien: **E** Exception- und Ressourcen-Design, **P** Performance, **T*
 |---|---|---|---|---|---|---|
 | A018 | Abstrakte Klasse ohne Zustand kann Interface sein | 1 | ⚠️ | intellij:ClassMayBeInterface, netbeans:Class may be interface (class_structure) | `abstract class A { abstract void run(); }` → `interface A` |  |
 | A019 | Leere Methode in abstrakter Klasse statt abstract | 1 | ⚠️ | intellij:NoopMethodInAbstractClass, pmd:EmptyMethodInAbstractClassShouldBeAbstract | `abstract class A { void hook() {} }` → `abstract void hook();` |  |
-| A020 | public-Konstruktor in abstrakter Klasse | 1 | ⚠️ | intellij:NonProtectedConstructorInAbstractClass | `abstract class A { public A() {} }` → `protected A()` |  |
+| A020 | public-Konstruktor in abstrakter Klasse ✅ umgesetzt | 1 | ⚠️ | intellij:NonProtectedConstructorInAbstractClass | `abstract class A { public A() {} }` → `protected A()` |  |
 | A021 | Funktionales Interface ohne @FunctionalInterface | 2* | ✅ | intellij:InterfaceMayBeAnnotatedFunctional, pmd:ImplicitFunctionalInterface | `interface Action { void run(); }` → `@FunctionalInterface interface Action` | nur Interfaces ohne Obertypen außerhalb der Datei |
 | A022 | Leeres Marker-Interface | 1 | – | intellij:MarkerInterface | `interface Tagged {}` | A005 erlaubt Marker-Interfaces |
 | A023 | Konstante in Interface deklariert | 1 | – | intellij:ConstantDeclaredInInterface | `interface Config { int MAX = 10; }` | weiter als A005 (nur Konstanten-Interfaces) |
@@ -699,7 +701,7 @@ Neue Kategorien: **E** Exception- und Ressourcen-Design, **P** Performance, **T*
 | A098 | Zuweisung von null außerhalb der Deklaration | 1 | – | intellij:AssignmentToNull | `cache = null;` |  |
 | A099 | Variable in zu weitem Gültigkeitsbereich deklariert | 2 | ⚠️ | intellij:TooBroadScope | `int x = 0; if (c) { use(x); }` → `in den if-Block verschieben` | verwandt mit A014 (Abstand statt Block) |
 | A100 | Zeichenliteral ohne benannte Konstante | 1 | – | intellij:MagicCharacter | `if (c == ';')` → `if (c == SEPARATOR)` | Ergänzung zu A015 |
-| A101 | Auskommentierter Code | 1 | – | intellij:CommentedOutCode | `// int x = compute();` |  |
+| A101 | Auskommentierter Code ✅ umgesetzt | 1 | ⚠️ | intellij:CommentedOutCode | `// int x = compute();` |  |
 | A102 | Veraltetes Element wird in der Datei noch verwendet | 2 | – | intellij:DeprecatedIsStillUsed | `@Deprecated void old() {} void x() { old(); }` |  |
 | A103 | native-Methode deklariert | 1 | – | intellij:NativeMethods | `native void read();` |  |
 | A104 | JDBC-Verbindung über DriverManager statt DataSource | 2 | – | intellij:DriverManagerGetConnection | `DriverManager.getConnection(url)` |  |
@@ -882,7 +884,7 @@ Neue Kategorien: **E** Exception- und Ressourcen-Design, **P** Performance, **T*
 | L005 | Platzhalter verbraucht die Exception (kein Stacktrace) | 2 | ⚠️ | baseline:LoggerInterpolationConsumesThrowable | `catch (E e) { log.warn("failed {}", e); }` → `log.warn("failed", e)` | SLF4J, Log4j 2; Exception als catch-Parameter bekannt |
 | L006 | Exception nicht als letztes Log-Argument ★ | 2 | ✅ | baseline:Slf4jThrowable | `log.warn("x {}", e, id)` → `log.warn("x {}", id, e)` | SLF4J, Log4j 2 |
 | L007 | Log im catch-Block ohne die gefangene Exception | 2 | ⚠️ | baseline:CatchBlockLogException | `catch (IOException e) { log.warn("failed"); }` → `log.warn("failed", e)` | SLF4J, Log4j 2, JUL |
-| L008 | Log-Nachricht vorab formatiert/verkettet statt Platzhalter | 2 | ⚠️ | intellij:StringConcatenationArgumentToLogCall, netbeans:String concatenation in logger (logging), picnic:FormatStringConcatenation, baseline:Slf4jConstantLogMessage, picnic:EagerStringFormatting | `log.info("x=" + x)` → `log.info("x={}", x); log.info(String.format("x=%s", x))` → `log.info("x={}", x)` | SLF4J, Log4j 2; picnic auch für Guava Preconditions |
+| L008 | Log-Nachricht vorab formatiert/verkettet statt Platzhalter ✅ umgesetzt | 2 | ⚠️ | intellij:StringConcatenationArgumentToLogCall, netbeans:String concatenation in logger (logging), picnic:FormatStringConcatenation, baseline:Slf4jConstantLogMessage, picnic:EagerStringFormatting | `log.info("x=" + x)` → `log.info("x={}", x); log.info(String.format("x=%s", x))` → `log.info("x={}", x)` | SLF4J, Log4j 2; picnic auch für Guava Preconditions |
 | L009 | Log-Guard passt nicht zum Level des Aufrufs ★ | 2 | ⚠️ | intellij:LoggingConditionDisagreesWithLogLevelStatement, baseline:Slf4jLevelCheck | `if (log.isDebugEnabled()) { log.info(…); }` → `isInfoEnabled()` | SLF4J, Log4j 2, JUL (isLoggable) |
 | L010 | Log-Guard fehlt bzw. ist überflüssig (wählbar) | 2* | ⚠️ | intellij:LogStatementNotGuardedByLogCondition, pmd:GuardLogStatement, intellij:LoggingGuardedByCondition | `log.debug("x=" + compute())` → `if (log.isDebugEnabled()) …` | SLF4J, Log4j 2, JUL; Option: Guard verlangen (teure Argumente) oder überflüssigen Guard bei reinen Platzhaltern melden (Gegenregeln) |
 | L011 | Ähnliche Log-Nachrichten in einer Klasse | 2* | – | intellij:LoggingSimilarMessage | `log.info("loaded: {}", a); … log.info("loaded: {}", b);` | SLF4J, Log4j 2, JUL |
