@@ -221,6 +221,9 @@ genutzt oder umstritten). Ihre Codes werden nicht neu vergeben.
 
 ## 6. Eclipse-Save-Actions: Zuordnung
 
+Die vollständige Zuordnung aller Eclipse-Clean-Ups (`CleanUpConstants`, 156 Einträge) steht in
+[regel-erweiterung.md](regel-erweiterung.md), Abschnitt 5.
+
 | Save Action | Ziel |
 |---|---|
 | Format source code, Correct indentation, Remove trailing whitespace | fmt ✔ |
@@ -297,6 +300,9 @@ Import aus `checkstyle.xml`, PMD-Rulesets und Eclipse-Einstellungen, die Namensm
 | Nicht übernehmen | Translation, UniqueProperties, OrderedProperties (Properties-Dateien), SuppressWarningsHolder (stattdessen eigene Unterdrückungs-Logik, die `@SuppressWarnings("checkstyle:…")`, `// CHECKSTYLE:OFF`, `// NOPMD` und `suppressions.xml` versteht) |
 
 ## 9. Offene Punkte
+- **Weitere Regelquellen:** [regel-erweiterung.md](regel-erweiterung.md) wertet IntelliJ, Error Prone, PMD, NetBeans,
+  Picnic, Palantir Baseline, Modernizer, forbidden-apis, javac und Eclipse JDT vollständig aus und schlägt die
+  geeigneten Regeln als distinktes Regelset mit Codes vor.
 - **CLI:** Die heutige CLI ist kompatibel zur Original-CLI (`jtk [optionen] dateien`). Vorschlag: `jtk fmt …` mit
   denselben Optionen, `jtk lint …` neu; der Aufruf ohne Unterbefehl bleibt als Alias für `fmt`.
 - **Regelnamen prüfen:** Die PMD-Namen sind gegen den Regelkatalog von PMD 7.29.0 geprüft (18.11.2026; korrigiert:
