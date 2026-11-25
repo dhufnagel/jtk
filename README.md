@@ -65,9 +65,7 @@ Differences from the original command line:
 
 ```sh
 ./target/release/jtk lint src                  # file:line:column: CODE message; exit 1 on violations, 2 on usage errors
-./target/release/jtk check src                 # CI: unformatted files and violations in one pass
-./target/release/jtk check -i src              # format in place, then lint the formatted files
-./target/release/jtk check --fix src           # apply automatic fixes, format in place, lint (the same as jtk src)
+./target/release/jtk check src                 # CI: unformatted files and violations, changes nothing
 ./target/release/jtk --unsafe-fixes src        # also apply the unsafe fixes
 ```
 
@@ -109,14 +107,14 @@ Checkstyle equivalents; on the Checkstyle test inputs, they report 99% of Checks
 `scripts/compare-with-pmd.sh` does the same with PMD 7, on the code of PMD's rule tests
 (`scripts/extract-pmd-test-code.py`).
 
-`jtk lint` and `jtk check` take files and directories; in directories they check the `.java` files that no
-`.gitignore` file ignores.
+`jtk`, `jtk lint` and `jtk check` take files and directories; in directories they check the `.java` files that no
+`.gitignore` file ignores. `jtk check` changes no files and so takes no fix options.
 
 Options:
 
-- `--fix` applies automatic fixes (the S and M rules), leaving out fixes that could drop side effects;
-  `jtk lint --fix` writes the fixed files unformatted.
-- `--unsafe-fixes` with `--fix` also applies the unsafe fixes, which may change the behaviour in edge cases, as in
+- `jtk lint --fix` applies the safe fixes, leaving out fixes that could drop side effects, and writes the fixed
+  files unformatted (for projects formatted by another tool); `jtk` always applies them and formats.
+- `--unsafe-fixes` (with `jtk`, or `jtk lint --fix`) also applies the unsafe fixes, which may change the behaviour in edge cases, as in
   ruff: removing unused variables and private members (B026, B027), `"a".equals(s)` for `==` and literal-first
   `equals` (B007, B008), `x == null` for `x.equals(null)` (B009), switch rules (M002) and
   multi-catch (M010), and among the rules from further tools `x % 2 != 0` (B090), `L` suffixes against overflow

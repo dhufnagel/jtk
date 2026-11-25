@@ -578,21 +578,18 @@ Exits with 1 if there are violations or errors, and with 2 on usage or configura
 
 const CHECK_USAGE: &str = "Usage: jtk check [options] path(s)
 
-Formats and lints the files. Prints the files that are not formatted and one line per rule violation:
-file:line:column: CODE message. Directories are searched for .java files.
-  -i              Format the files in place and lint the formatted text.
+Checks the formatting and the rules without changing the files (for CI). Prints the files that are not formatted
+and one line per rule violation: file:line:column: CODE message. Directories are searched for .java files. `jtk`
+without a command fixes and formats the files.
   --select CODES  Only check rules whose code starts with one of the comma-separated prefixes (e.g. B,S001),
                   ALL for all rules. Without it, the configured or default rules are checked.
   --extend-select CODES  Also check the rules matching the prefixes.
   --ignore CODES  Do not check rules whose code starts with one of the prefixes.
   --java VERSION  The project's Java version: skip rules that suggest newer language features.
-  --fix           Apply automatic fixes before formatting (implies -i).
-  --unsafe-fixes  With --fix, also apply the fixes that may change the behaviour in edge cases.
   --config FILE   The jtk.toml to use instead of the nearest one in each file's directory or above.
   --output-format FORMAT  text (default) or json: one JSON object with the unformatted files and the
                   violations, each with file, line, column, code, message and fix (safe, unsafe or null).
-Exits with 1 if a file is not formatted (without -i), has violations or errors, and with 2 on usage or
-configuration errors.";
+Exits with 1 if a file is not formatted, has violations or errors, and with 2 on usage or configuration errors.";
 
 /// Options of `jtk lint` and `jtk check`.
 struct LintOptions {
@@ -605,10 +602,11 @@ struct LintOptions {
     json: bool,
 }
 
-fn parse_lint_options(args: &[String], allow_in_place: bool) -> Result<LintOptions, String> {
+/// Parses the options of a command: `jtk check` changes no files, so it takes no fix options; `jtk` always fixes
+/// and formats in place.
+fn parse_lint_options(args: &[String], command: Command) -> Result<LintOptions, String> {
     let mut paths = Vec::new();
-    let mut in_place = false;
-    let mut fix = false;
+    let mut fix = command == Command::Fix;
     let mut unsafe_fixes = false;
     let mut arguments = LintArguments::default();
     let mut config = None;
@@ -616,9 +614,8 @@ fn parse_lint_options(args: &[String], allow_in_place: bool) -> Result<LintOptio
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
-            "-i" if allow_in_place => in_place = true,
-            "--fix" => fix = true,
-            "--unsafe-fixes" => unsafe_fixes = true,
+            "--fix" if command == Command::Lint => fix = true,
+            "--unsafe-fixes" if command != Command::Check => unsafe_fixes = true,
             "--select" => arguments.select.extend(rule_codes(it.next())?),
             "--extend-select" => arguments.extend_select.extend(rule_codes(it.next())?),
             "--ignore" => arguments.ignore.extend(rule_codes(it.next())?),
@@ -633,7 +630,7 @@ fn parse_lint_options(args: &[String], allow_in_place: bool) -> Result<LintOptio
         return Err("no files given".to_string());
     }
     Selection::new(arguments.select.clone(), arguments.ignore.clone())?.extended(arguments.extend_select.clone())?;
-    let in_place = in_place || (fix && allow_in_place);
+    let in_place = command == Command::Fix;
     Ok(LintOptions { paths, in_place, fix, unsafe_fixes, arguments, config, json })
 }
 
@@ -686,7 +683,7 @@ fn lint_jobs(o: &LintOptions, err: &mut dyn Write) -> Result<(Vec<LintJob>, bool
 /// Parses the options and prepares the files of `jtk lint` or `jtk check`, or prints the usage or configuration
 /// error and returns the exit code.
 fn prepare(args: &[String], command: Command, err: &mut dyn Write) -> Result<(LintOptions, Vec<LintJob>, bool), i32> {
-    let mut o = parse_lint_options(args, command != Command::Lint).map_err(|message| {
+    let o = parse_lint_options(args, command).map_err(|message| {
         let usage = match command {
             Command::Lint => LINT_USAGE,
             Command::Check => CHECK_USAGE,
@@ -695,10 +692,6 @@ fn prepare(args: &[String], command: Command, err: &mut dyn Write) -> Result<(Li
         let _ = writeln!(err, "{message}\n\n{usage}");
         2
     })?;
-    if command == Command::Fix {
-        o.fix = true;
-        o.in_place = true;
-    }
     let (jobs, all_ok) = lint_jobs(&o, err).map_err(|message| {
         let _ = writeln!(err, "{message}");
         2
@@ -748,9 +741,9 @@ fn lint_input(job: &LintJob, o: &LintOptions) -> Result<(String, Vec<Diagnostic>
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Command {
     Lint,
-    /// `jtk check`: formats and lints, changing the files only with `-i` or `--fix`.
+    /// `jtk check`: checks formatting and rules without changing the files.
     Check,
-    /// `jtk` without a command: `jtk check --fix`.
+    /// `jtk` without a command: fixes, formats in place and lints.
     Fix,
 }
 

@@ -103,10 +103,17 @@ fn check_command_line() {
     let expected = format!("{0}: not formatted\n{0}:2:2: S001 'if' body without braces\n", file.display());
     assert_eq!(jtk(&["check"], &[&file]), (1, expected));
 
-    // With -i, the file is formatted and positions refer to the formatted text.
-    let expected = format!("{}:3:9: S001 'if' body without braces\n", file.display());
-    assert_eq!(jtk(&["check", "-i"], &[&file]), (1, expected));
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "class A {\n    void f() {\n        if (a) b();\n    }\n}\n");
+    // `jtk check` changes no files.
+    assert_eq!(jtk(&["check", "-i"], &[&file]).0, 2);
+    assert_eq!(jtk(&["check", "--fix"], &[&file]).0, 2);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), unformatted);
+
+    // Without a command, the file is fixed and formatted, and positions refer to the result.
+    let expected = format!("{}:3:13: B009 equals(null) instead of == null\n", file.display());
+    std::fs::write(&file, "class A { void f() {\n if (a.equals(null)) b(); } }\n").unwrap();
+    assert_eq!(jtk(&[], &[&file]), (1, expected));
+    let fixed = "class A {\n    void f() {\n        if (a.equals(null)) {\n            b();\n        }\n    }\n}\n";
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), fixed);
 
     std::fs::remove_dir_all(&dir).unwrap();
 }

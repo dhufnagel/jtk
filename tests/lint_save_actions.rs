@@ -59,7 +59,7 @@ fn unsafe_fixes_command_line() {
     );
 
     std::fs::write(&file, source).unwrap();
-    assert_eq!(jtk(&["check", "--select", "B009", "--fix", "--unsafe-fixes"], &[&file]), (0, String::new()));
+    assert_eq!(jtk(&["--select", "B009", "--unsafe-fixes"], &[&file]), (0, String::new()));
     assert_eq!(
         std::fs::read_to_string(&file).unwrap(),
         "class A {\n    boolean f(Object o) {\n        return (o == null);\n    }\n}\n"
