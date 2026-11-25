@@ -69,8 +69,8 @@ Differences from the original command line:
 ./target/release/jtk --unsafe-fixes src        # also apply the unsafe fixes
 ```
 
-`jtk lint` checks what the formatter leaves alone. The rules come from Checkstyle, PMD, Error Prone and the Eclipse
-save actions; [docs/regel-analyse.md](docs/regel-analyse.md) lists them all, [docs/regel-erweiterung.md](docs/regel-erweiterung.md) the rules from further tools. Without `--select`, the default set
+`jtk lint` checks what the formatter leaves alone. The rules come from Checkstyle, PMD, Error Prone, the Eclipse
+save actions and further tools (IntelliJ inspections, Picnic, Baseline, NetBeans, ...); [docs/regel-analyse.md](docs/regel-analyse.md) lists them all, [docs/regel-erweiterung.md](docs/regel-erweiterung.md) the rules from further tools. Without `--select`, the default set
 runs, chosen for few false alarms:
 
 | Codes | Rules |
@@ -119,8 +119,10 @@ Options:
   ruff: removing unused variables and private members (B026, B027), `"a".equals(s)` for `==` and literal-first
   `equals` (B007, B008), `x == null` for `x.equals(null)` (B009), switch rules (M002) and
   multi-catch (M010), and among the rules from further tools `x % 2 != 0` (B090), `L` suffixes against overflow
-  (B093), `throw` for exceptions created but not thrown (B219), `@Test` for JUnit 3 style methods (T001) and
-  `start()` for `Thread.run()` (K001). Review their changes.
+  (B093), `throw` for exceptions created but not thrown (B219), `@Test` for JUnit 3 style methods (T001),
+  `start()` for `Thread.run()` (K001), `protected` constructors in abstract classes (A020), deleting commented-out
+  code (A101), `List.of()` instead of `return null` (B174), `{}` placeholders instead of concatenated log messages
+  (L008) and `Stream.toList()`, whose list is unmodifiable (S155). Review their changes.
 - `--select` and `--ignore` take comma-separated code prefixes (`--select B,S001`); `--select ALL` checks all rules,
   `--extend-select` adds rules to the selected or default set.
 - `--java VERSION` skips rules that suggest newer language features than the project's Java version.
@@ -262,8 +264,10 @@ Linux, macOS and Windows for every push and pull request.
 `.github/workflows/release.yml` builds jtk for Linux (glibc 2.17 or later), macOS and Windows on x64 and ARM64,
 packages the VS Code extension once per platform, and creates a draft GitHub release. To release:
 
-1. Set the version in `Cargo.toml` (and `editors/vscode/package.json`), commit, and push.
-2. Tag the commit: `git tag v0.8.0 && git push origin v0.8.0` (the tag must match the version in `Cargo.toml`).
+1. Set the version in `Cargo.toml`, `Cargo.lock`, `editors/vscode/package.json` and `package-lock.json`, and in the
+   examples of `README.md`, `editors/vscode/README.md` and `crates/jtk-parser/README.md`; commit, and push.
+2. Tag the commit: `git tag -a v0.8.0 -m "Release 0.8.0" && git push origin v0.8.0` (the tag must match the version
+   in `Cargo.toml`).
 3. Review the draft release on GitHub and publish it.
 
 Each archive contains the binary, `LICENSE`, `NOTICE`, `README.md` and `THIRD-PARTY-LICENSES.md` (the licenses of

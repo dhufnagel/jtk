@@ -2,7 +2,7 @@
 
 Formats and lints Java with [jtk](https://github.com/dhufnagel/jtk): the same formatting as
 [palantir-java-format](https://github.com/palantir/palantir-java-format), without a JVM, and rules from Checkstyle,
-PMD and the Eclipse save actions. The extension runs `jtk lsp` as a language server.
+PMD, Error Prone, the Eclipse save actions and further tools. The extension runs `jtk lsp` as a language server.
 
 - **Problems:** jtk's rule violations in open Java files, updated while typing.
 - **Quick fixes:** the fix of a violation where jtk has one, and **Suppress … on this line**

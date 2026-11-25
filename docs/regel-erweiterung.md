@@ -1,6 +1,6 @@
 # Regelkatalog: Erweiterung von `jtk lint` aus weiteren Open-Source-Tools
 
-Stand: 24.11.2026 · Ergänzt [regel-analyse.md](regel-analyse.md), Abschnitt 5
+Stand: 25.11.2026 · Ergänzt [regel-analyse.md](regel-analyse.md), Abschnitt 5
 
 ## 1. Quellen und Vorgehen
 

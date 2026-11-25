@@ -2,6 +2,10 @@
 
 Stand: 16.11.2026 · jtk `c1c43ff` · Checkstyle 14.4.0 · Quellen: PMD 7, Checkstyle, Error Prone, Eclipse-Save-Actions
 
+**Nachtrag 25.11.2026 (jtk 0.8.0):** M002, M006, M007, M009 und M010 sind ins Standard-Set gekommen (★), damit `jtk`
+ohne Befehl die Eclipse-Save-Actions ausführt; M009 hat seither einen sicheren Fix. Die Regeln aus weiteren Tools,
+darunter die nach einem Abgleich mit SonarQube ergänzten, stehen in [regel-erweiterung.md](regel-erweiterung.md).
+
 ## 1. Ausgangslage
 
 `jtk fmt` ist ein byte-identischer Port von palantir-java-format 2.103.0. Das ist das stärkste Argument für das Tool und
@@ -152,15 +156,15 @@ EC = Eclipse-Save-Action.
 | Code | Regel | Ab Java | Herkunft | Fix | Stufe |
 |---|---|---|---|---|---|
 | M001 ★ | Pattern Matching für `instanceof` | 16 | EC | ✅ | 1 |
-| M002 | Switch-Ausdruck / Pfeil-Syntax | 14 | CS UseEnhancedSwitch, EC | ⚠️ | 2 |
+| M002 ★ | Switch-Ausdruck / Pfeil-Syntax | 14 | CS UseEnhancedSwitch, EC | ⚠️ | 2 |
 | M003 | `when`-Guard statt `if` im `case` | 21 | CS WhenShouldBeUsed | ✅ | 1 |
 | M004 ★ | Diamond-Operator (einfache Fälle) | 7 | PMD UseDiamondOperator, EC „Remove redundant type arguments“ | ✅ | 1 |
 | M005 | Unnötige Typargumente im Record-Pattern | 21 | CS UnnecessaryTypeArgumentsWithRecordPattern | ✅ | 1 |
-| M006 | `var` (nur sichere Fälle) / kein `var` (wählbar) | 10 | EC „Use var“ | ✅ | 1 |
-| M007 | Enhanced for über Arrays | 5 | PMD ForLoopCanBeForeach, EC | ✅ | 2 |
+| M006 ★ | `var` (nur sichere Fälle) / kein `var` (wählbar) | 10 | EC „Use var“ | ✅ | 1 |
+| M007 ★ | Enhanced for über Arrays | 5 | PMD ForLoopCanBeForeach, EC | ✅ | 2 |
 | M008 | Unbenutzte catch-/Lambda-/try-Variable → `_` | 22 | CS Unused*ShouldBeUnnamed | ✅ | 2 |
-| M009 | Text Block statt verketteter Strings | 15 | EC „Use text blocks“ | ✅ | 1 |
-| M010 | Identische catch-Blöcke zusammenfassen | 7 | PMD IdenticalCatchBranches, EC | ⚠️ | 1 |
+| M009 ★ | Text Block statt verketteter Strings | 15 | EC „Use text blocks“ | ✅ | 1 |
+| M010 ★ | Identische catch-Blöcke zusammenfassen | 7 | PMD IdenticalCatchBranches, EC | ⚠️ | 1 |
 | M011 | `final` für Parameter | – | CS FinalParameters, EC | ✅ | 1 |
 | M012 | Privates Feld kann `final` sein | – | PMD ImmutableField, EC „final for private fields“ | ✅ | 2 |
 | M013 | `@Deprecated` passend zu `@deprecated` | – | CS MissingDeprecated, EP DepAnn, EC „Add missing @Deprecated“ | ✅ | 1 |
@@ -217,7 +221,10 @@ AvoidEscapedUnicodeCharacters, IllegalToken/IllegalTokenText, IllegalType, Illeg
 Abfragesprache auf dem eigenen AST, eher später).
 
 **Nicht vergeben:** B029, S022, A009, A013, A016, C002, C012, C017, C018 und C019 (verworfene Regeln, selten
-genutzt oder umstritten). Ihre Codes werden nicht neu vergeben.
+genutzt oder umstritten). Ihre Codes werden nicht neu vergeben. A016 (doppelte String-Literale) etwa meldet vor allem
+gewollte Wiederholungen wie Query-Parameter-, JSON- und Header-Namen, deren Auslagerung in Konstanten den Code eher
+schwerer lesbar macht; die Schwellen sind willkürlich (Checkstyle ab 2, Sonar ab 3, PMD ab 4 Vorkommen), und einen
+sicheren Fix gibt es nicht, weil Name und Ort der Konstante geraten werden müssten.
 
 ## 6. Eclipse-Save-Actions: Zuordnung
 
