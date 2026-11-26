@@ -35,7 +35,9 @@ fn jtk(dir: &Dir, args: &[&str]) -> (i32, String, String) {
     let (mut out, mut err) = (Vec::new(), Vec::new());
     let code = run(&args, &mut "".as_bytes(), &mut out, &mut err);
     let prefix = format!("{}{}", dir.0.display(), std::path::MAIN_SEPARATOR);
-    let out = String::from_utf8(out).unwrap().replace(&prefix, "");
+    // JSON output escapes the `\` of Windows paths.
+    let json_prefix = prefix.replace('\\', "\\\\");
+    let out = String::from_utf8(out).unwrap().replace(&prefix, "").replace(&json_prefix, "");
     // Windows paths use `\`.
     let out = if cfg!(windows) { out.replace('\\', "/") } else { out };
     (code, out, String::from_utf8(err).unwrap())
